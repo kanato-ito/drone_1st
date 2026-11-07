@@ -9,7 +9,7 @@
  * - レジスタ名は STの公式ドライバ(lsm6dsv16x-pid)の記憶に基づく。アドレス値と
  *   ビット位置はここには書かず、.c 実装時にデータシートで確認する:
  *     WHO_AM_I の期待値            ... TODO: DS確認
- *     FIFO_CTRL1 (FIFO_WTM)        ... TODO: DS確認（単位が「ワード」か要確認）
+ *     FIFO_CTRL1 (FIFO_WTM)        ... 単位はワード（TAG+6バイト）。WTM=16で8組（2026-11-07決定）
  *     FIFO_STATUS1/2 (DIFF_FIFO, FIFO_WTM_IA, FIFO_OVR_IA)  ... TODO: DS確認
  *     FIFO_DATA_OUT_TAG / FIFO_DATA_OUT_X_L ...（1ワード=タグ1+データ6バイト）TODO: DS確認
  *     タグ値（ジャイロ/加速度）    ... TODO: DS確認
@@ -49,7 +49,7 @@ typedef enum {
 /** IMU設定。imu_config_default() で既定値を得て、必要なら書き換える。 */
 typedef struct {
     uint32_t spi_baud_request_hz;  /**< 8000000（実7.5MHz）。設計メモ7章 #6 */
-    uint16_t fifo_watermark_words; /**< ウォーターマーク。単位が「ワード」なら16（8組）。architecture.md #4 */
+    uint16_t fifo_watermark_words; /**< ウォーターマーク [ワード]。16（8組）。architecture.md #4 */
     float    odr_hz_measured;      /**< 実測ODR [Hz]（設計メモ2章: 7519）。姿勢推定のdtに使う */
     uint16_t gyro_fs_dps;         /**< ジャイロのフルスケール [dps]。提案: 要検討（メモ未記載） */
     uint8_t  accel_fs_g;          /**< 加速度のフルスケール [g]。提案: 要検討（メモ未記載） */
