@@ -188,7 +188,7 @@ drone_1st/
     include/          ← 今回作った .h
     src/              ← 今後。main.c, imu_lsm6dsv16x.c, control_loop.c, ... ヘッダと1対1
     test/             ← 提案: PCで試す純粋モジュール（mixer, flight_state, guard, spsc_ring, comm_*）
-    CMakeLists.txt    ← 今回は作らない（PICO_BOARD=pico2_w）
+    CMakeLists.txt    ← ステップ②で作成（PICO_BOARD=pico2_w、ライブラリ fc_imu + 試験アプリ）
 ```
 
 起動の流れ（`main.c`、提案）: コア0で `params_set_defaults` → `ipc_init` → `multicore_launch_core1(comm_core1_entry)`（Wi-Fi/USB初期化はコア1の中） → `control_loop_init` → `control_loop_run`。WDTは初期化が済んだ後に開始し、餌やりはコア0だけが行う（コア1の停止は通信途絶として検出する）。

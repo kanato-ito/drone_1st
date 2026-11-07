@@ -6,13 +6,9 @@
  * - INT1(GP26, 立ち上がり)の割り込み登録はコア0で行うこと。
  *   Pico SDKのGPIO割り込みはコアごとに有効化されるため、コア1でWi-Fiを
  *   初期化しても影響しない（設計メモ3章の分担を保つ）。
- * - レジスタ名は STの公式ドライバ(lsm6dsv16x-pid)の記憶に基づく。アドレス値と
- *   ビット位置はここには書かず、.c 実装時にデータシートで確認する:
- *     WHO_AM_I の期待値            ... TODO: DS確認
- *     FIFO_CTRL1 (FIFO_WTM)        ... 単位はワード（TAG+6バイト）。WTM=16で8組（2026-11-07決定）
- *     FIFO_STATUS1/2 (DIFF_FIFO, FIFO_WTM_IA, FIFO_OVR_IA)  ... TODO: DS確認
- *     FIFO_DATA_OUT_TAG / FIFO_DATA_OUT_X_L ...（1ワード=タグ1+データ6バイト）TODO: DS確認
- *     タグ値（ジャイロ/加速度）    ... TODO: DS確認
+ * - レジスタのアドレス・ビット配置・値は ST公式ドライバ (lsm6dsv16x-pid) の
+ *   lsm6dsv16x_reg.h / lsm6dsv16x_reg.c で確認済み（ステップ②、出典は imu_lsm6dsv16x.c の各定義に記載）。
+ *   FIFO_CTRL1 (FIFO_WTM) の単位はワード（TAG+6バイト）。WTM=16で8組（2026-11-07決定）。
  */
 #ifndef IMU_LSM6DSV16X_H
 #define IMU_LSM6DSV16X_H
@@ -66,6 +62,18 @@ typedef struct {
     uint32_t timestamp_us;  /**< 最新の立ち上がり時刻 [µs]（下位32bit）。1周期の「開始時刻」 */
 } imu_int1_event_t;
 
+/** 設定の読み戻し結果の最大行数（imu_config_readback 用の固定長配列のサイズ）。 */
+#define IMU_READBACK_MAX 12
+
+/** 設定レジスタ1本ぶんの「読み戻した値」と「あるべき値」（ブレッドボード試験の表示用）。 */
+typedef struct {
+    const char *name;   /**< レジスタ名（文字列リテラル） */
+    uint8_t addr;       /**< レジスタアドレス */
+    uint8_t value;      /**< 今読み出した値 */
+    uint8_t expected;   /**< imu_init が書いたはずの値 */
+    uint8_t mask;       /**< 比較に使うビット（value & mask == expected & mask なら一致） */
+} imu_reg_readback_t;
+
 /** 既定のIMU設定を返す。コア0、起動時に1回。 */
 imu_config_t imu_config_default(void);
 
@@ -82,6 +90,13 @@ imu_status_t imu_init(const imu_config_t *cfg);
  * 設計メモ7章 #6（SPIクロック確定試験）で使う。
  */
 imu_status_t imu_whoami_check(void);
+
+/**
+ * 設定レジスタを読み戻して out[] に入れ、行数を返す（最大 max_entries。SPI未初期化なら0）。
+ * 呼ぶコア: コア0。頻度: 起動時の表示用に1回。WHO_AM_I も含む。
+ * 一致判定は呼び出し側で (value ^ expected) & mask を見る。
+ */
+uint8_t imu_config_readback(imu_reg_readback_t *out, uint8_t max_entries);
 
 /** 実際に設定されたSPIクロック [Hz]（spi_init()の戻り値）。ログ・試験用。コア0、随時。 */
 uint32_t imu_spi_actual_baud_hz(void);
