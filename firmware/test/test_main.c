@@ -553,34 +553,34 @@ static void test_cycle_timing(void)
     CHECK(t.wake_latency_us == 21);
 }
 
-/* imu_mount: 仕組みの試験。既定値ではなく、試験の中で作った明示的な並べ替え {2,-1,3} を使う */
+/* imu_mount: 仕組みの試験。既定値でも実機の値でもない、試験用の任意の並べ替え {-3,1,2} を使う
+ * （機体x = -基板z、機体y = +基板x、機体z = +基板y） */
 static void test_imu_mount(void)
 {
-    imu_mount_params_t m = { { 2, -1, 3 } };
+    imu_mount_params_t m = { { -3, 1, 2 } };
     CHECK(imu_mount_valid(&m));
 
     imu_batch_t b;
     memset(&b, 0, sizeof(b));
     b.count = 2;
-    b.samples[0].accel_g.z = 1.0f;                 /* 水平静止 */
-    b.samples[1].accel_g.x = 1.0f;                 /* 基板x(右) */
-    b.samples[1].gyro_rps.y = 2.0f;                /* 基板y(前)まわり */
+    b.samples[0].accel_g.z = 1.0f;
+    b.samples[1].accel_g.x = 1.0f;
+    b.samples[1].gyro_rps.y = 2.0f;
     b.samples[1].gyro_rps.z = 3.0f;
     imu_mount_apply(&m, &b);
-    CHECK_NEAR(b.samples[0].accel_g.x, 0.0f, 1e-6f);
+    CHECK_NEAR(b.samples[0].accel_g.x, -1.0f, 1e-6f);   /* 基板z → 機体 -x */
     CHECK_NEAR(b.samples[0].accel_g.y, 0.0f, 1e-6f);
-    CHECK_NEAR(b.samples[0].accel_g.z, 1.0f, 1e-6f);
-    CHECK_NEAR(b.samples[1].accel_g.x, 0.0f, 1e-6f);
-    CHECK_NEAR(b.samples[1].accel_g.y, -1.0f, 1e-6f);   /* 右 → 機体 -y */
-    CHECK_NEAR(b.samples[1].gyro_rps.x, 2.0f, 1e-6f);   /* 基板y → 機体x */
+    CHECK_NEAR(b.samples[0].accel_g.z, 0.0f, 1e-6f);
+    CHECK_NEAR(b.samples[1].accel_g.y, 1.0f, 1e-6f);    /* 基板x → 機体 +y */
+    CHECK_NEAR(b.samples[1].gyro_rps.x, -3.0f, 1e-6f);  /* 基板z → 機体 -x */
     CHECK_NEAR(b.samples[1].gyro_rps.y, 0.0f, 1e-6f);
-    CHECK_NEAR(b.samples[1].gyro_rps.z, 3.0f, 1e-6f);
+    CHECK_NEAR(b.samples[1].gyro_rps.z, 2.0f, 1e-6f);   /* 基板y → 機体 +z */
 
     /* 恒等なら変えない。count より後ろには触らない */
     imu_mount_params_t id = { { 1, 2, 3 } };
     b.samples[2].gyro_rps.x = 5.0f;
     imu_mount_apply(&id, &b);
-    CHECK_NEAR(b.samples[1].accel_g.y, -1.0f, 1e-6f);
+    CHECK_NEAR(b.samples[1].accel_g.y, 1.0f, 1e-6f);
     imu_mount_apply(&m, &b);
     CHECK_NEAR(b.samples[2].gyro_rps.x, 5.0f, 1e-6f);
 
