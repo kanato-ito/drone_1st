@@ -17,6 +17,10 @@ set(FC_CORE_SOURCES
     ${_FC_ROOT}/src/thrust_model.c
     ${_FC_ROOT}/src/battery.c
     ${_FC_ROOT}/src/cycle_timer.c
+    ${_FC_ROOT}/src/flight_state.c
+    ${_FC_ROOT}/src/guard.c
+    ${_FC_ROOT}/src/emergency_descent.c
+    ${_FC_ROOT}/src/control_loop.c
 )
 
 set(FC_PORT_PICO_SOURCES

@@ -20,18 +20,11 @@
 #include "battery.h"
 #include "cycle_timer.h"
 #include "fake_port.h"
+#include "test_common.h"
 
 #define PI_F  3.14159265f
-#define DEG   0.017453293f
 
-static int g_checks, g_fail, g_test_checks;
-
-#define CHECK(cond) do { g_checks++; g_test_checks++; if (!(cond)) { g_fail++; \
-    printf("    FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); } } while (0)
-#define CHECK_NEAR(a, b, tol) do { float a_ = (float)(a), b_ = (float)(b), t_ = (float)(tol); \
-    g_checks++; g_test_checks++; \
-    if (!(fabsf(a_ - b_) <= t_)) { g_fail++; \
-    printf("    FAIL %s:%d  %s = %g, 期待 %g ± %g\n", __FILE__, __LINE__, #a, (double)a_, (double)b_, (double)t_); } } while (0)
+int g_checks, g_fail, g_test_checks;
 
 /* 決定的な乱数（試験を毎回同じ結果にする） */
 static uint32_t s_rng = 12345u;
@@ -499,7 +492,6 @@ static void test_chain(void)
     }
 }
 
-typedef struct { const char *name; void (*fn)(void); } test_t;
 
 static void test_battery_update_with_divider(void)
 {
@@ -666,7 +658,7 @@ static void test_physical_signs(void)
 int main(void)
 {
     params_set_defaults(&P);
-    const test_t tests[] = {
+    static const test_t tests[] = {
         { "attitude: 静止でバイアス収束・姿勢0・固定", test_attitude_still_and_bias },
         { "attitude: 動いている間は静止にしない", test_attitude_not_still_when_moving },
         { "attitude: 傾けた加速度にτで追従", test_attitude_tilt_follows_tau },
@@ -688,15 +680,20 @@ int main(void)
         { "battery: 偽ADCの生カウント→電圧（分圧比）", test_battery_update_with_divider },
         { "cycle_timing: 遅れ・処理時間・取りこぼし", test_cycle_timing },
     };
-    int n = (int)(sizeof(tests) / sizeof(tests[0]));
-    int failed_tests = 0;
-    for (int i = 0; i < n; i++) {
-        int before = g_fail;
-        g_test_checks = 0;
-        tests[i].fn();
-        bool ok = (g_fail == before);
-        if (!ok) failed_tests++;
-        printf("%s  %s (%d checks)\n", ok ? "PASS" : "FAIL", tests[i].name, g_test_checks);
+    const test_t *suites[] = { tests, g_tests_fsm, g_tests_guard, g_tests_descent, g_tests_loop };
+    const int counts[] = { (int)(sizeof(tests) / sizeof(tests[0])), g_tests_fsm_n, g_tests_guard_n,
+                           g_tests_descent_n, g_tests_loop_n };
+    int n = 0, failed_tests = 0;
+    for (int s = 0; s < 5; s++) {
+        for (int i = 0; i < counts[s]; i++) {
+            int before = g_fail;
+            g_test_checks = 0;
+            suites[s][i].fn();
+            bool ok = (g_fail == before);
+            if (!ok) failed_tests++;
+            n++;
+            printf("%s  %s (%d checks)\n", ok ? "PASS" : "FAIL", suites[s][i].name, g_test_checks);
+        }
     }
     if (g_fail == 0) {
         printf("\nALL PASS: %d tests, %d checks\n", n, g_checks);

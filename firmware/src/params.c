@@ -71,7 +71,9 @@ void params_set_defaults(params_t *p)
     p->battery.v_low             = 3.6f;   /* 仮 */
     p->battery.low_hold_ms       = 500;    /* 仮 */
 
-    /* ---- 安全系（③bで使う。今は既定値だけ）---- */
+    /* ---- 安全系（③bで使う。すべて仮・提案）----
+     * wdt_timeout_ms: 100ms（仮）。1周期は約1ms、IMU途絶時の時間基準は5ms。USB printf の詰まりを許す余裕も見て100。
+     * 実機で周期の最悪値を測って詰める。 */
     p->safety.tilt_estop_rad     = 60.0f * 0.017453293f;
     p->safety.comm_timeout_ms    = 500;
     p->safety.imu_timeout_us     = 5000;
@@ -125,6 +127,22 @@ bool params_validate(const params_t *p)
     const battery_params_t *b = &p->battery;
     if (!(b->adc_divider_ratio > 0.0f) || !(b->lpf_tau_s > 0.0f) || !(b->v_min < b->v_max) ||
         !(b->v_low >= b->v_min) || !(b->v_low <= b->v_max)) return false;
+    /* 安全系（③bで使う）。明らかな矛盾・NaN・0以下を弾く */
+    const safety_params_t *sf = &p->safety;
+    if (!(isfinite(sf->tilt_estop_rad) && sf->tilt_estop_rad > 0.0f && sf->tilt_estop_rad <= 3.14159265f)) return false;
+    if (!(sf->comm_timeout_ms > 0) || !(sf->imu_timeout_us > 0)) return false;
+    /* WDTは INT1 待ち(5ms)より十分長くしないと、IMU途絶の時間基準(5ms)の間にリセットされる */
+    if (!(sf->wdt_timeout_ms >= 20)) return false;
+    if (!(isfinite(sf->arm_level_tol_rad) && sf->arm_level_tol_rad > 0.0f) || !ok_nonneg(sf->arm_throttle_tol)) return false;
+    const guard_params_t *gd = &p->guard;
+    if (!(isfinite(gd->tilt_takeover_rad) && gd->tilt_takeover_rad > 0.0f && gd->tilt_takeover_rad < sf->tilt_estop_rad)) return false;
+    if (!(isfinite(gd->rate_takeover_rps) && gd->rate_takeover_rps > 0.0f)) return false;
+    if (!(isfinite(gd->policy_sat_ratio) && gd->policy_sat_ratio > 0.0f && gd->policy_sat_ratio <= 1.0f)) return false;
+    if (!(gd->policy_sat_cycles > 0) || !(gd->policy_budget_us > 0)) return false;
+    const descent_params_t *ds = &p->descent;
+    if (!(isfinite(ds->thrust_ratio) && ds->thrust_ratio > 0.0f && ds->thrust_ratio <= 1.0f)) return false;
+    if (!(ds->max_time_ms > 0) || !ok_nonneg(ds->shock_g) || !ok_nonneg(ds->quiet_rate_rps) ||
+        !ok_nonneg(ds->quiet_accel_tol_g)) return false;
     return true;
 }
 

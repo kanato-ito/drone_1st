@@ -22,7 +22,8 @@ typedef enum {
     TAKEOVER_POLICY_NAN,      /**< 方策の出力がNaN/Inf */
     TAKEOVER_POLICY_SATURATED,/**< 出力が上限に張りつき */
     TAKEOVER_POLICY_OVERRUN,  /**< 方策の計算が周期内に終わらない */
-    TAKEOVER_HUMAN            /**< 人の指示（旗。パケット項目は提案） */
+    TAKEOVER_HUMAN,           /**< 人の指示（旗。パケット項目は提案） */
+    TAKEOVER_POLICY_FAIL      /**< 提案: 方策の step が失敗（重み未ロードなど）を返した */
 } takeover_reason_t;
 
 typedef struct {
@@ -35,6 +36,12 @@ void guard_reset(guard_t *g);
 
 /** 取り上げ済みか。コア0、毎周期。 */
 bool guard_taken_over(const guard_t *g);
+
+/** 理由を指定して取り上げる（すでに取り上げ済みなら何もしない）。方策の step 失敗用。コア0。 */
+void guard_force_takeover(guard_t *g, takeover_reason_t reason);
+
+/** 理由の名前（ログ・表示用）。 */
+const char *takeover_reason_name(takeover_reason_t r);
 
 /**
  * 方策を呼ぶ前の判定。コア0、方策使用中に1周期に1回。
