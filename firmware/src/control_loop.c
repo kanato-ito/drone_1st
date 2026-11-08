@@ -287,7 +287,11 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev)
     c->policy_us = 0;
     c->mix.saturated = false;
     for (int i = 0; i < FC_NUM_MOTORS; i++) c->duty[i] = 0.0f;
-    const bool flying = flight_fsm_motors_allowed(st);
+    /* 提案: 飛行中でもスロットルが idle_throttle 以下なら回さない（状態は飛行のまま）。
+     * 地上でアームしたまま傾いていると、P項だけでモーターが回ってしまうため。降下中は機体が回すので対象外 */
+    const bool idle = (st == FS_FLIGHT) &&
+                      (finite_or_zero(c->target.throttle) <= p->safety.idle_throttle);
+    const bool flying = flight_fsm_motors_allowed(st) && !idle;
 
     if (flying) {
         if (st == FS_FLIGHT) {
@@ -354,7 +358,7 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev)
         }
         c->motors_on = true;
     } else {
-        /* 停止状態（BOOT / WAIT_COMM / STANDBY / ESTOP）。毎周期止める（冪等） */
+        /* 停止状態（BOOT / WAIT_COMM / STANDBY / ESTOP）と、飛行中のスロットル0付近。毎周期止める（冪等） */
         c->target_att = (euler_t){ 0.0f, 0.0f, 0.0f };
         c->target_thrust_g = 0.0f;
         c->out = zero_output();

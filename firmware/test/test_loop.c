@@ -64,7 +64,9 @@ static void cycle(void)
     int sets = fake_pwm_set_calls;
     control_loop_step(&L);
     steps++;
-    if (!flight_fsm_motors_allowed(L.fsm.state)) {
+    /* 飛行中でもスロットルが idle_throttle 以下なら止める（提案）。そのときも「停止」と同じ条件で見る */
+    const bool idle = L.fsm.state == FS_FLIGHT && L.target.throttle <= LP.safety.idle_throttle;
+    if (!flight_fsm_motors_allowed(L.fsm.state) || idle) {
         bool zero = true;
         for (int i = 0; i < FC_NUM_MOTORS; i++) if (fake_pwm_duty[i] != 0.0f) zero = false;
         if (fake_pwm_set_calls != sets || !zero || L.motors_on) motor_violations++;
@@ -120,6 +122,25 @@ static void body_tilt_roll(float deg)   /* 機体を左側上げ方向に deg �
 }
 
 /* ------------------------------------------------------------------ */
+
+static void test_loop_idle_throttle(void)
+{
+    /* アームしたままスロットル0で傾けても、モーターは回らない（提案）。上げれば回る */
+    setup();
+    to_flight(0.0f);
+    CHECK(L.fsm.state == FS_FLIGHT);
+    body_tilt_roll(8.0f);
+    run(200);
+    CHECK(L.fsm.state == FS_FLIGHT);
+    CHECK(!L.motors_on);
+    pkt.throttle = 0.4f;
+    run(5);
+    CHECK(L.motors_on);
+    pkt.throttle = 0.0f;
+    run(5);
+    CHECK(!L.motors_on);
+    end_checks();
+}
 
 static void test_loop_init_ok(void)
 {
@@ -748,6 +769,7 @@ static void test_loop_policy_not_used_in_descent(void)
 
 const test_t g_tests_loop[] = {
     { "loop: 起動（PWM0→初期化→WDT開始、既定は本番の値）", test_loop_init_ok },
+    { "loop: 飛行中でもスロットル0付近では回さない（提案）", test_loop_idle_throttle },
     { "loop: 起動時の失敗（IMU無応答・WDT再起動）は非常停止", test_loop_init_failures },
     { "loop: 通信待機→待機→アーム→飛行→ディスアーム（フラグ/カウンタ）", test_loop_lifecycle },
     { "loop: アーム条件（水平・辺・電池）", test_loop_arm_conditions },

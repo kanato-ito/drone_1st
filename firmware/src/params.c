@@ -80,6 +80,8 @@ void params_set_defaults(params_t *p)
     p->safety.wdt_timeout_ms     = 100;
     p->safety.arm_level_tol_rad  = 10.0f * 0.017453293f;
     p->safety.arm_throttle_tol   = 0.05f;
+    /* 提案: スロットル0付近では、アーム中でも回さない（地上で傾いていると姿勢制御だけでモーターが回るのを防ぐ） */
+    p->safety.idle_throttle      = 0.05f;
     p->guard.tilt_takeover_rad   = 30.0f * 0.017453293f;
     p->guard.rate_takeover_rps   = 8.0f;
     p->guard.policy_sat_ratio    = 0.95f;
@@ -134,6 +136,7 @@ bool params_validate(const params_t *p)
     /* WDTは INT1 待ち(5ms)より十分長くしないと、IMU途絶の時間基準(5ms)の間にリセットされる */
     if (!(sf->wdt_timeout_ms >= 20)) return false;
     if (!(isfinite(sf->arm_level_tol_rad) && sf->arm_level_tol_rad > 0.0f) || !ok_nonneg(sf->arm_throttle_tol)) return false;
+    if (!(isfinite(sf->idle_throttle) && sf->idle_throttle >= 0.0f && sf->idle_throttle < 1.0f)) return false;
     const guard_params_t *gd = &p->guard;
     if (!(isfinite(gd->tilt_takeover_rad) && gd->tilt_takeover_rad > 0.0f && gd->tilt_takeover_rad < sf->tilt_estop_rad)) return false;
     if (!(isfinite(gd->rate_takeover_rps) && gd->rate_takeover_rps > 0.0f)) return false;
