@@ -16,6 +16,7 @@
 #include "params.h"
 #include "imu_lsm6dsv16x.h"
 #include "attitude.h"
+#include "imu_mount.h"
 #include "controller.h"
 #include "controller_pid.h"
 #include "mixer.h"
@@ -136,6 +137,7 @@ int32_t fcsim_step(uint32_t int1_timestamp_us)
         return 0;
     }
 
+    imu_mount_apply(&prm->imu_mount, &S.batch);   /* 基板の軸 → 機体の軸（control_bench と同じ位置） */
     attitude_update_batch(&S.att, &S.batch, S.dt_sample);
     const attitude_state_t *as = attitude_get(&S.att);
 

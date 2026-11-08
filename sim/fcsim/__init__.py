@@ -7,4 +7,4 @@ plot    … 記録のグラフ
 """
 from .fc import FlightComputer, PID_ANGLE, PID_RATE, ROLL, PITCH, YAW  # noqa: F401
 from .model import BenchModel, Disturbance, DroneModel, NO_DISTURBANCE  # noqa: F401
-from .runner import Controls, Log, Scenario, Simulation, SAMPLES_PER_CYCLE  # noqa: F401
+from .runner import Controls, Log, Scenario, Simulation, SAMPLES_PER_CYCLE, MOUNT_BODY_TO_BOARD  # noqa: F401

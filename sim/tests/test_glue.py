@@ -92,18 +92,32 @@ def test_battery_voltage_goes_through_adc(fc):
     assert log["batt_raw_v"][-1] == pytest.approx(3.62, abs=0.002)
 
 
-def test_imu_mount_rotates_into_board_axes(fc):
-    # 機体 x前・y左・z上、基板 x右・y前・z上 のときの 機体→基板 の回転
-    mount = np.array([[0.0, -1.0, 0.0],
-                      [1.0, 0.0, 0.0],
-                      [0.0, 0.0, 1.0]])
-    model = BenchModel(lambda t: (10 * DEG * ramp(t, 0.2, 0.5), 0.0, 0.0))   # 機体のロール +10°
-    log = Simulation(model, fc, imu_mount=mount).run(
-        Scenario(duration_s=1.0, controls=lambda t: Controls()))
+def test_body_axes_survive_mount_and_axis_map(fc):
+    # runner が機体→基板に回し、ファームが axis_map で基板→機体に戻す。往復して機体の軸に戻ること
+    for k, (r, p) in enumerate([(10.0, 0.0), (0.0, 10.0)]):
+        model = BenchModel(lambda t, r=r, p=p: (r * DEG * ramp(t, 0.2, 0.5), p * DEG * ramp(t, 0.2, 0.5), 0.0))
+        log = Simulation(model, fc).run(Scenario(duration_s=1.0, controls=lambda t: Controls()))
+        i = at(log, 0.95)
+        assert log["angle_rad"][i, 0] == pytest.approx(r * DEG, abs=0.5 * DEG)
+        assert log["angle_rad"][i, 1] == pytest.approx(p * DEG, abs=0.5 * DEG)
+
+
+def test_wrong_mount_is_visible(fc):
+    # 取り付けを間違えると（機体＝基板と思い込む）、機体のロールがファームでは別の軸に出る
+    model = BenchModel(lambda t: (10 * DEG * ramp(t, 0.2, 0.5), 0.0, 0.0))
+    log = Simulation(model, fc, imu_mount=np.eye(3)).run(Scenario(duration_s=1.0, controls=lambda t: Controls()))
     i = at(log, 0.95)
-    # ファームはまだ基板の軸で計算する（axis_map 未実装）ので、機体のロールは基板のy軸まわり＝ファームのピッチに出る
-    assert log["angle_rad"][i, 1] == pytest.approx(10 * DEG, abs=0.5 * DEG)
     assert abs(log["angle_rad"][i, 0]) < 0.5 * DEG
+    assert abs(log["angle_rad"][i, 1]) == pytest.approx(10 * DEG, abs=0.5 * DEG)
+
+
+def test_mixer_table_is_design_memo(fc):
+    fc.reset()
+    expected = np.array([[-1, +1, +1],   # M1 右後 CW
+                         [-1, -1, -1],   # M2 右前 CCW
+                         [+1, +1, -1],   # M3 左後 CCW
+                         [+1, -1, +1]])  # M4 左前 CW
+    assert np.array_equal(fc.mixer_sign(), expected)
 
 
 def test_left_handed_mount_is_rejected(fc):

@@ -18,6 +18,13 @@ from .model import NO_DISTURBANCE, Disturbance, DroneModel
 
 SAMPLES_PER_CYCLE = 8   # FIFOのウォーターマーク 16ワード ÷ 2（ジャイロ＋加速度で1組）
 
+# 機体の軸（x前・y左・z上）→ IMU基板の軸（x右・y前・z上）。設計メモの axis_map = {2, -1, 3} の逆向き。
+#   基板x（右）= −機体y、基板y（前）= +機体x、基板z = +機体z
+# ファームは imu_mount_apply で基板→機体に戻すので、ここと axis_map がそろっていれば機体の軸で一致する。
+MOUNT_BODY_TO_BOARD = np.array([[0.0, -1.0, 0.0],
+                                [1.0, 0.0, 0.0],
+                                [0.0, 0.0, 1.0]])
+
 
 @dataclass
 class Controls:
@@ -47,8 +54,8 @@ class Simulation:
                  imu_mount: np.ndarray | None = None, pwm_delay_samples: int = 0, seed: int = 0):
         self.model = model
         self.fc = fc or FlightComputer()
-        # 機体座標 → IMU基板座標。kanato さんが決めた取り付けに合わせて変える（既定: 同じ向き）
-        self.imu_mount = np.eye(3) if imu_mount is None else np.asarray(imu_mount, dtype=np.float64)
+        # 機体座標 → IMU基板座標（既定: 設計メモの取り付け）。偽IMUは基板の軸で出す（並べ替えはファームの仕事）
+        self.imu_mount = MOUNT_BODY_TO_BOARD if imu_mount is None else np.asarray(imu_mount, dtype=np.float64)
         if not np.allclose(self.imu_mount @ self.imu_mount.T, np.eye(3), atol=1e-9) or \
                 not np.isclose(np.linalg.det(self.imu_mount), 1.0):
             raise ValueError("imu_mount は回転行列（直交・行列式+1）にすること。左手系は不可")
