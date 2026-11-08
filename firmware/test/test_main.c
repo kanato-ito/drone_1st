@@ -15,6 +15,7 @@
 #include "controller.h"
 #include "controller_pid.h"
 #include "mixer.h"
+#include "imu_mount.h"
 #include "thrust_model.h"
 #include "battery.h"
 #include "cycle_timer.h"
@@ -552,6 +553,59 @@ static void test_cycle_timing(void)
     CHECK(t.wake_latency_us == 21);
 }
 
+/* imu_mount: 仕組みの試験。既定値ではなく、試験の中で作った明示的な並べ替え {2,-1,3} を使う */
+static void test_imu_mount(void)
+{
+    imu_mount_params_t m = { { 2, -1, 3 } };
+    CHECK(imu_mount_valid(&m));
+
+    imu_batch_t b;
+    memset(&b, 0, sizeof(b));
+    b.count = 2;
+    b.samples[0].accel_g.z = 1.0f;                 /* 水平静止 */
+    b.samples[1].accel_g.x = 1.0f;                 /* 基板x(右) */
+    b.samples[1].gyro_rps.y = 2.0f;                /* 基板y(前)まわり */
+    b.samples[1].gyro_rps.z = 3.0f;
+    imu_mount_apply(&m, &b);
+    CHECK_NEAR(b.samples[0].accel_g.x, 0.0f, 1e-6f);
+    CHECK_NEAR(b.samples[0].accel_g.y, 0.0f, 1e-6f);
+    CHECK_NEAR(b.samples[0].accel_g.z, 1.0f, 1e-6f);
+    CHECK_NEAR(b.samples[1].accel_g.x, 0.0f, 1e-6f);
+    CHECK_NEAR(b.samples[1].accel_g.y, -1.0f, 1e-6f);   /* 右 → 機体 -y */
+    CHECK_NEAR(b.samples[1].gyro_rps.x, 2.0f, 1e-6f);   /* 基板y → 機体x */
+    CHECK_NEAR(b.samples[1].gyro_rps.y, 0.0f, 1e-6f);
+    CHECK_NEAR(b.samples[1].gyro_rps.z, 3.0f, 1e-6f);
+
+    /* 恒等なら変えない。count より後ろには触らない */
+    imu_mount_params_t id = { { 1, 2, 3 } };
+    b.samples[2].gyro_rps.x = 5.0f;
+    imu_mount_apply(&id, &b);
+    CHECK_NEAR(b.samples[1].accel_g.y, -1.0f, 1e-6f);
+    imu_mount_apply(&m, &b);
+    CHECK_NEAR(b.samples[2].gyro_rps.x, 5.0f, 1e-6f);
+
+    /* 不正: 0、範囲外、重複 → 弾く。不正なら apply は何もしない */
+    imu_mount_params_t bad0 = { { 0, 2, 3 } }, bad4 = { { 1, 2, 4 } },
+                       dup = { { 1, 1, 3 } }, dup2 = { { 2, -2, 3 } }, negmin = { { -128, 2, 3 } };
+    CHECK(!imu_mount_valid(&bad0));
+    CHECK(!imu_mount_valid(&bad4));
+    CHECK(!imu_mount_valid(&dup));
+    CHECK(!imu_mount_valid(&dup2));
+    CHECK(!imu_mount_valid(&negmin));
+    b.samples[1].gyro_rps.x = 7.0f;
+    imu_mount_apply(&dup, &b);
+    CHECK_NEAR(b.samples[1].gyro_rps.x, 7.0f, 1e-6f);
+
+    /* params_validate は不正な並べ替えを弾き、有効な並べ替えは通す。既定値は恒等のまま */
+    params_t p;
+    params_set_defaults(&p);
+    CHECK(params_validate(&p));
+    p.imu_mount = m;
+    CHECK(params_validate(&p));
+    p.imu_mount = dup;
+    CHECK(!params_validate(&p));
+}
+
 int main(void)
 {
     params_set_defaults(&P);
@@ -570,6 +624,7 @@ int main(void)
         { "mixer: 符号と合計", test_mixer_signs_and_sum },
         { "mixer: 飽和（ヨー削り→ずらし→縮小）", test_mixer_saturation },
         { "mixer: 乱数入力で範囲と素通し", test_mixer_fuzz },
+        { "imu_mount: 軸の並べ替えと不正な設定の拒否", test_imu_mount },
         { "thrust: 推力→デューティの式", test_thrust_model },
         { "chain: 姿勢→PID→ミキサー→デューティ", test_chain },
         { "battery: 偽ADCの生カウント→電圧（分圧比）", test_battery_update_with_divider },

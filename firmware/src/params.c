@@ -8,6 +8,7 @@
 #include <string.h>
 #include "params.h"
 #include "mixer.h"
+#include "imu_mount.h"
 
 static params_t s_params;
 
@@ -90,6 +91,7 @@ void params_set_defaults(params_t *p)
     /* 方策の正規化: 恒等（学習側と決めるまで）、IMU取り付け: 軸そのまま */
     for (int i = 0; i < FC_CONTROLLER_INPUT_DIM; i++) { p->policy_norm.in_scale[i] = 1.0f; }
     for (int i = 0; i < FC_CONTROLLER_OUTPUT_DIM; i++) { p->policy_norm.out_scale[i] = 1.0f; }
+    /* TODO: 設計メモで確定するまで仮（恒等）。値はオーナーが導いて設計メモに書く */
     p->imu_mount.axis_map[0] = 1; p->imu_mount.axis_map[1] = 2; p->imu_mount.axis_map[2] = 3;
 }
 
@@ -116,6 +118,7 @@ bool params_validate(const params_t *p)
     if (!(isfinite(af->thrust_k_g_per_vduty) && af->thrust_k_g_per_vduty > 0.0f)) return false;
     if (!(isfinite(af->voltage_min_calc_v) && af->voltage_min_calc_v > 0.0f)) return false;
     if (!ok_nonneg(af->throttle_full_thrust_g)) return false;
+    if (!imu_mount_valid(&p->imu_mount)) return false;
     const battery_params_t *b = &p->battery;
     if (!(b->adc_divider_ratio > 0.0f) || !(b->lpf_tau_s > 0.0f) || !(b->v_min < b->v_max) ||
         !(b->v_low >= b->v_min) || !(b->v_low <= b->v_max)) return false;
