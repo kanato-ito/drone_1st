@@ -21,7 +21,7 @@
 | --- | --- | --- | --- | --- |
 | `imu_lsm6dsv16x.h` | `imu_config_default` `imu_init` `imu_whoami_check` `imu_config_readback` `imu_spi_actual_baud_hz` `imu_fifo_flush` `imu_on_int1_edge` `imu_wait_int1` `imu_int1_pin_is_high` `imu_read_fifo` `imu_sample_period_s` | `port_pico/imu_lsm6dsv16x.c` | `imu_wait_int1` はタイムアウトまで待ち、来なければ false。`imu_read_fifo` は `imu_batch_t` を本物と同じ物理単位（gyro は rad/s、accel は g、軸はIMU基板の軸のまま。偽物も並べ替えない。機体の軸への並べ替えは共通コード `src/imu_mount.c` が行う）で埋める。`imu_sample_period_s` は本物のサンプル間隔。`imu_int1_pin_is_high` は false でよい | コア0。待ち・読み出しは1周期に1回（約940Hz）、初期化は起動時 |
 | `motor_pwm.h` | `motor_pwm_init` `motor_pwm_set` `motor_pwm_stop` | `port_pico/motor_pwm.c` | `set` で受けたデューティ(0..1、範囲外とNaNは0)を覚える。`stop` で全部0 | コア0。`set` は1周期に1回、`stop` は必要なとき |
-| `cycle_timer.h`（時計・WDT） | `fc_clock_now_us64` `fc_clock_now_us32` `fc_wdt_start` `fc_wdt_feed` `fc_wdt_caused_reboot` | `port_pico/clock_wdt_pico.c` | 時計は単調増加（仮想時間でよい）。us32 は us64 の下位32bit。WDTは空でよい（`caused_reboot` は false） | 時計は随時（両コア）。`feed` はコア0、1周期に1回 |
+| `cycle_timer.h`（時計・WDT） | `fc_clock_now_us64` `fc_clock_now_us32` `fc_wdt_start` `fc_wdt_feed` `fc_wdt_caused_reboot` | `port_pico/clock_wdt_pico.c`（③bでWDTも本実装） | 時計は単調増加（仮想時間でよい）。us32 は us64 の下位32bit。WDTは空でよい（`caused_reboot` は false）。試験の偽物は呼んだ回数と開始時の時間を覚える（`test/fake_port.c`） | 時計は随時（両コア）。`start` は起動の最後に1回、`feed` はコア0、1周期に1回 |
 | `batt_adc.h` | `batt_adc_init` `batt_adc_read_raw` | `port_pico/batt_adc_pico.c` | 12bitの生カウント(0..4095)を返す。分圧比などの換算は `battery.c` が行うので偽物はしない | コア0。読み出しは数周期に1回（数µs） |
 
 `cycle_timing_begin/end` は純粋C（`src/cycle_timer.c`）で、時計の関数だけを使う。ポートではない。
@@ -48,13 +48,17 @@ target_link_libraries(sim PRIVATE fc_core)
 
 偽物の最小の見本は `firmware/test/fake_port.c`（batt_adc と時計）。
 
-## 6. `control_loop_run_once(c, ev)` の方針（ステップ③b）
+## 6. `control_loop_run_once(c, ev)` の方針（ステップ③b、実装済み）
 
 ```c
-void control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev);
+bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev);
 ```
 
-- 中では待たない。INT1の記録 `ev` は呼ぶ側が渡す。
-- 実機: `control_loop_run` が `imu_wait_int1` の結果を渡して呼ぶ。タイムアウト処理もこちら。
-- シミュレータ: 仮想時間で作った `ev` を渡して直接呼ぶ。
-- 中から呼ぶのは `imu_read_fifo`、`motor_pwm_*`、`battery_update`、`fc_clock_*`、`fc_wdt_feed`、mailbox / ipc_flags だけ。すべてヘッダ越し。
+- 中では待たない。INT1の記録 `ev` は呼ぶ側が渡す。`ev==NULL` は「INT1が来ない（IMU途絶）」周期。
+- 戻り値は「読み終えてもINT1ピンがHigh」（取りこぼし）。true なら待たずにすぐもう一度呼ぶ。
+- 実機: `control_loop_step`（`control_loop_run` が繰り返す）が `imu_wait_int1` の結果を渡して呼ぶ。タイムアウト・救出もこちら。
+- シミュレータ: 仮想時間で作った `ev` を渡して直接呼ぶ（`imu_int1_pin_is_high` は false を返してよい）。
+- 中から呼ぶのは `imu_init`（起動時）`imu_read_fifo`、`motor_pwm_*`、`battery_update`、`fc_clock_*`、`fc_wdt_*`、mailbox / ipc_flags だけ。すべてヘッダ越し。
+- リンクに必要なもの: 上のポート4つ（imu, motor_pwm, 時計/WDT, batt_adc）に加え、`mailbox_*` `ipc_flags_*` と `ipc_flags()`（ipc.h）。
+  本物はステップ④。それまでの偽物は `test/fake_ipc.c`（ホスト試験）と `apps/bench_ipc_stub.c`（loop_bench）。
+- 例: `test/test_loop.c` が、ここに書いたとおりの使い方（偽物の IMU を `fake_imu_*` で操作）をしている。
