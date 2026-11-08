@@ -3,7 +3,9 @@
  * @brief 全モジュール共通の基本型と定数。SDK非依存。
  *
  * 単位の約束（提案。メモには未記載。architecture.md の未決事項を参照）:
- *   角度 rad / 角速度 rad/s / 加速度 g / 時間 µs / 推力 N / トルク N·m
+ *   角度 rad / 角速度 rad/s / 加速度 g / 時間 µs
+ *   推力・ロール/ピッチ/ヨー指令は すべて「1モーターあたりの推力 [g]（グラム重）」でそろえる
+ *   （2026-11-08 オーナー決定。理由は docs/step3a_control_chain.md）
  */
 #ifndef FC_TYPES_H
 #define FC_TYPES_H

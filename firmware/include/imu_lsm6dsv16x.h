@@ -2,6 +2,14 @@
  * @file imu_lsm6dsv16x.h
  * @brief IMU（LSM6DSV16X, SPI0）ドライバ。INT1で起こされ、FIFOを全部読む。
  *
+ * ポート（差し替え境界）: 実機は port_pico ディレクトリの imu_lsm6dsv16x.c、シミュレータは同じ関数を自前の.cで実装する。
+ * 偽物（フェイク）が守ること:
+ *   - imu_wait_int1: timeout_us まで待ち、INT1が来たら true と ev を返す。来なければ false（タイムアウト）。
+ *   - imu_read_fifo: imu_batch_t を埋める。count が有効数、samples[] は本物と同じ物理単位
+ *     （gyro_rps = rad/s、accel_g = g。軸はIMU基板の軸のまま。取り付け補正は未実装で、本物も補正しない）。
+ *   - imu_sample_period_s: 本物と同じサンプル間隔 [s]（1/ODR。姿勢推定のdtに使う）。
+ *   - imu_int1_pin_is_high: 単に false を返してもよい。
+ *
  * - すべてコア0で使う。SDK非依存（SPI/GPIOは .c の中に隠す）。
  * - INT1(GP26, 立ち上がり)の割り込み登録はコア0で行うこと。
  *   Pico SDKのGPIO割り込みはコアごとに有効化されるため、コア1でWi-Fiを

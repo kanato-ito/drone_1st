@@ -2,8 +2,12 @@
  * @file cycle_timer.h
  * @brief 時計・1周期ごとの時刻計測・ウォッチドッグの薄いラッパ。SDK非依存。
  *
+ * ポート（差し替え境界）: fc_clock_* と fc_wdt_* は実機は port_pico ディレクトリの clock_wdt_pico.c、
+ * シミュレータは同じ関数を自前の.cで実装する（時計は仮想時間でよい）。
+ * cycle_timing_begin/end は純粋C（src/cycle_timer.c）で、fc_clock_now_us32() だけを使う。
+ *
  * Pico SDK の watchdog_* 等と名前がぶつからないよう fc_ を付ける。
- * 実装はSDK（time_us_64, watchdog_*）を呼ぶ。
+ * 実機の実装はSDK（time_us_64, watchdog_*）を呼ぶ。
  */
 #ifndef CYCLE_TIMER_H
 #define CYCLE_TIMER_H
@@ -16,7 +20,7 @@
 
 /** 1周期ぶんの時刻記録（ログに入る）。 */
 typedef struct {
-    uint32_t cycle_index;      /**< 周期番号（0から） */
+    uint32_t cycle_index;      /**< 周期番号（cycle_timing_begin のたびに+1。ゼロ初期化から始めると最初の周期は1） */
     uint32_t start_us;         /**< 周期の開始時刻 = INT1の立ち上がり時刻（下位32bit） */
     uint16_t wake_latency_us;  /**< INT1から処理開始までの遅れ */
     uint16_t proc_us;          /**< 処理開始〜PWM更新完了（1.04msに収まるかの確認用） */

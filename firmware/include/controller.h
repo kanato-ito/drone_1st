@@ -4,7 +4,10 @@
  *
  * 入力14 = 姿勢3+角速度3+目標姿勢3+目標推力1+前回出力4、出力4 = 推力+3軸トルク
  * （設計メモ1章）。コア0、制御ループの中で1周期に1回。
- * 単位は提案: 推力 [N]、トルク [N·m]。前回出力は「実際に指令した（上限処理後の）値」。
+ * 単位は決定（2026-11-08）: 推力・ロール/ピッチ/ヨー指令はすべて「1モーターあたりの推力 [g]」。
+ *   thrust_g = 4モーターの平均推力、torque_g[i] = その軸のモーター間の推力差の片側ぶん（ミキサーが±で配る）。
+ *   アーム長やヨー係数を今は持ち込まず、PIDのゲインを実機で合わせれば済むようにするため。
+ * 前回出力は「実際に指令した（上限処理後の）値」。
  * 差し替えは関数ポインタの表(ops)で行う。他案: 条件分岐(switch)は制御器が増えると
  * 呼び出し側が膨らむので採らなかった。
  */
@@ -14,6 +17,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "fc_types.h"
+#include "attitude.h"
 
 typedef enum {
     CONTROLLER_PID = 0,
@@ -21,17 +25,26 @@ typedef enum {
 } controller_id_t;
 
 typedef struct {
-    float thrust_n;
-    float torque_nm[3];   /**< roll, pitch, yaw */
+    float thrust_g;       /**< 1モーターあたりの推力（4つの平均）[g] */
+    float torque_g[3];    /**< roll, pitch, yaw の指令 [g]（モーター間の推力差の片側ぶん） */
 } controller_output_t;
 
 typedef struct {
     euler_t attitude;               /**< 姿勢角 */
     vec3f_t rate_rps;               /**< 角速度 */
     euler_t target_attitude;        /**< 目標姿勢 */
-    float   target_thrust_n;        /**< 目標推力 */
+    float   target_thrust_g;        /**< 目標推力（1モーターあたり）[g] */
     controller_output_t prev_output;/**< 前回出力 */
 } controller_input_t;
+
+/**
+ * 姿勢推定の結果と目標から制御器の入力を作る。
+ * ヨーは「目標とのずれ」を ±π に折り返して渡す（rev22）: attitude.yaw = wrap(yaw - 目標yaw)、
+ * target.yaw = 0。こうすると ±180° をまたいでも制御器が逆回りに大回りしない。
+ * 呼ぶコア: コア0。頻度: 1周期に1回。
+ */
+void controller_input_make(const attitude_state_t *att, const euler_t *target, float target_thrust_g,
+                           const controller_output_t *prev, controller_input_t *in);
 
 /**
  * 入力を方策用の平らな float[14] に詰める。順序（学習側と一致させる）:

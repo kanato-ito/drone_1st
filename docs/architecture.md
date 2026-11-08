@@ -1,6 +1,6 @@
 # 初代C ファームウェア構成（ステップ① モジュール構成とヘッダ）
 
-正本は設計メモ rev14。メモにないことは「提案」と明記した。実装はまだ無く、`firmware/include/` のヘッダ（型と関数宣言のみ）がある。
+正本は設計メモ rev14、その後の決定は rev22（2026-11-08。姿勢推定・PID・ミキサー・推力換算）。食い違ったら rev22 が優先。メモにないことは「提案」と明記した。ヘッダは `firmware/include/`、実装は `firmware/src/`（ステップ②でIMU、③aで制御の信号の流れまで。進み具合は4章の表）。
 章番号「メモN章」は設計メモの章を指す。
 
 ## ステップ②の前にオーナーに決めてほしいこと（優先順）
@@ -65,8 +65,8 @@ flowchart LR
 | --- | --- | --- |
 | IMU → 姿勢 | `imu_batch_t`（通常8組、最大32組） | 関数の引数（コア0内） |
 | 姿勢 → 制御器 | `attitude_state_t` → `controller_input_t`（14個） | 同上 |
-| 制御器 → ミキサー | `controller_output_t`（推力+3トルク） | 同上 |
-| ミキサー → PWM | デューティ4つ | 同上 |
+| 制御器 → ミキサー | `controller_output_t`（推力+3軸指令、すべて[g]） | 同上 |
+| ミキサー → PWM | モーター推力[g]×4 → `thrust_model` でデューティ4つ | 同上 |
 | PC → 機体 | 操縦パケット → mailbox / 旗 / コマンド | コア間（メモ4章） |
 | 機体 → PC | `log_record_t`（1周期1件、通し番号付き） | log queue |
 
@@ -77,13 +77,14 @@ flowchart LR
 | モジュール（ヘッダ） | 責務 | コア | 場所 | 根拠 | なぜ分けた／他案 |
 | --- | --- | --- | --- | --- | --- |
 | `imu_lsm6dsv16x.h` | SPI0でIMUを設定、INT1待ち、FIFO全読み | 0 | 割込(時刻記録のみ)+ループ | 2,3章 | ステップ②の単体試験の単位。ISRで読む案は、読み出し約160µsの間ほかの割り込みを止めるので不採用 |
-| `attitude.h` | IMU生値→姿勢角・角速度 | 0 | ループ | 1章 | 制御器の外に置く（メモ決定）。制御器の中に入れるとPIDと方策で推定が別物になり比べられない |
+| `attitude.h` | IMU生値→姿勢角・角速度（相補フィルタ、ヨーは積分、バイアス推定。rev22で決定） | 0 | ループ | 1章 | 制御器の外に置く（メモ決定）。制御器の中に入れるとPIDと方策で推定が別物になり比べられない |
 | `controller.h` | 入力14/出力4の共通口（ops表） | 0 | ループ | 1章 | switchでなく関数ポインタ表。制御器が増えても呼び出し側が変わらない |
-| `controller_pid.h` | PID（角度→角速度のカスケード、提案） | 0 | ループ | 1,5章 | 降下は必ずPIDなので常に使える状態にしておく |
+| `controller_pid.h` | 2段PID（外側: 角度→目標角速度、内側: 角速度→指令[g]。rev22で決定） | 0 | ループ | 1,5章 | 降下は必ずPIDなので常に使える状態にしておく |
 | `controller_policy.h` | 全結合NN、重みの受信・切替 | 0 | ループ | 1,4章 | 重みは2面(受信用/使用中)。受信途中の重みで飛ばないため |
 | `guard.h` | PIDの見張り役。取り上げ判定とラッチ | 0 | ループ | 5章 | FSMと別にした。FSMは機体の状態、guardは「どちらの制御器か」で、遷移表が混ざると読めなくなる |
 | `emergency_descent.h` | 降下の目標推力と着地検出 | 0 | ループ | 5章 | FSM内に書くと数値(試験で変わる)が遷移表に混ざる |
-| `mixer.h` | 推力+トルク→4デューティ | 0 | ループ | 1章 | 純粋関数。PCで単体試験できる |
+| `mixer.h` | 全体推力+3軸指令[g]→4モーターの推力[g]（符号表、飽和処理） | 0 | ループ | 1章, rev22 | 純粋関数。PCで単体試験できる |
+| `thrust_model.h` | 推力[g]→デューティ（÷(9.4×電池電圧)）、最大推力 | 0 | ループ | rev22 | ミキサーから分けた。ミキサーは「配分」だけ、ここはモーターと電池の物理だけを持つので、係数や電圧補償を直してもミキサーの試験が変わらない |
 | `motor_pwm.h` | 20kHz PWM出力、全停止 | 0 | ループ(起動で初期化) | 1章 | ミキサーとPWMを分けるのは、非常停止が「PWMを直接0」にできるようにするため |
 | `battery.h` | ADC2の計測、低下判定 | 0 | ループ(数周期に1回) | 1,5章 | 担当コアはメモに無い。電池低下は降下のきっかけなので安全系と同じコア0にした(提案) |
 | `flight_state.h` | 状態6つ、遷移、停止理由 | 0 | ループ | 5章 | 入力構造体→次状態の純粋関数にしてPCで試験する |
@@ -112,7 +113,7 @@ SDK依存: ヘッダはどれもSDKの型を使わない（`uint`などを出さ
 | 7 | `flight_fsm_step()` | 状態遷移。降下に入る周期は`descent_begin()` |
 | 8 | 制御器の選択: FLIGHT=選んだ方／降下=PID。方策使用中は`guard_check_pre()` | |
 | 9 | `controller_input_pack()` → `step()`（方策なら時間計測）→ `guard_check_post()` | 取り上げなら影PIDの出力を採用 |
-| 10 | `mixer_mix()` → `motor_pwm_set()`（モーター停止状態なら`motor_pwm_stop()`） | ここで「周期終了」 |
+| 10 | `thrust_model_max_g()` → `mixer_mix()` → `thrust_model_to_duty()`×4 → `motor_pwm_set()`（モーター停止状態なら`motor_pwm_stop()`） | ここで「周期終了」 |
 | 11 | `cycle_timing_end()` → `ipc_log_push()` → `fc_wdt_feed()` | ログとWDTはPWM更新の後。処理時間にはログ組み立てを含めない |
 | 12 | `imu_int1_pin_is_high()` を確認 | 立ち上がりを取りこぼして止まるのを防ぐ(#10) |
 
@@ -125,7 +126,8 @@ SDK依存: ヘッダはどれもSDKの型を使わない（`uint`などを出さ
 | ステップ | 実装する | 使うヘッダ |
 | --- | --- | --- |
 | ② IMUのFIFO読み出し | WHO_AM_I→FIFO設定→INT1→全読み | `board_pins.h` `fc_types.h` `imu_lsm6dsv16x.h` `cycle_timer.h`(時計のみ) |
-| ③ 制御ループ | 姿勢→PID→ミキサー→PWM、FSM、タイミングログ | `attitude` `controller*` `mixer` `motor_pwm` `params` `flight_state` `guard` `emergency_descent` `battery` `control_loop`（目標はダミー値） |
+| ③a 制御の信号の流れ（実装済み） | 姿勢推定→2段PID→ミキサー→推力換算→PWM、電池ADC、ホストPC単体試験、`control_bench` | `attitude` `controller` `controller_pid` `mixer` `thrust_model` `motor_pwm` `battery` `params`（詳細: [step3a_control_chain.md](step3a_control_chain.md)） |
+| ③b 状態遷移・安全（次回） | `flight_state`、`guard`（見張り役）、`emergency_descent`、WDT本実装、タイミングログ（`cycle_timing_*`）、`control_loop`（目標はダミー値） | `flight_state` `guard` `emergency_descent` `control_loop` `cycle_timer` |
 | ④ コア間リングバッファ | リング、ログ、コマンド、コア1 | `spsc_ring` `log_record` `cmd_msg` `ipc` `ipc_flags` `mailbox` `control_packet` `comm_core1` |
 
 ## 5. 矛盾しそうな点・決まっていない点
@@ -152,10 +154,10 @@ SDK依存: ヘッダはどれもSDKの型を使わない（`uint`などを出さ
 | 11 | ISRの中で処理か、ループか | ISRは記録だけ（3章） |
 | 12 | 遅れて2周期ぶん溜まったとき、制御は1回かN回か | 姿勢推定はサンプル全部、制御器は1周期1回（提案） |
 | 13 | 方策使用中のPIDを回すか | 影として毎周期回す（取り上げ時の積分が冷えない／計算時間超過のその周期の出力に使える）。計算コストは小 |
-| 14 | 姿勢推定のアルゴリズム、ジャイロのバイアス補正、ヨーの基準（磁気なし）、軸・単位・IMUの取り付け | 単位はrad, rad/s, g, N, N·m（提案）。バイアスは待機中に推定 |
+| ~~14~~ | ~~姿勢推定のアルゴリズム…~~ | **決定（rev22, 2026-11-08）**: ロール・ピッチは相補フィルタ（τは実機で調整、params）、ヨーはジャイロの積分だけ（磁気なし）。ジャイロのバイアスは飛行指示待機中に静止と判定している間だけ平均を更新しアーム時に固定（静止＝ジャイロのばらつき≤しきい値 かつ 加速度の大きさ≈1g が一定時間続く）。制御器へのヨーは目標とのずれを±180°に折り返して渡す。単位は角度rad・角速度rad/s・加速度g、推力系は[g]（#16/#17）。軸はIMU基板のまま（右手系、z上で水平なら+1g。取り付け補正は未実装）。提案で足したもの: 加速度の大きさが1gから0.3g以上ずれる周期は加速度補正をしない／静止判定に「ジャイロ平均の大きさ≤0.1rad/s」を追加（一定の速さで回り続けると「ばらつき」が0になりバイアスと誤認するため） |
 | 15 | 制御器入出力の正規化。前回出力は指令後の値か | 前回出力は上限処理後の値。正規化は`policy_norm_params_t`、活性化関数は学習側と決める |
-| 16 | 目標ヨーは角度か角速度か。スロットル(0..1)→推力(N)の換算 | `max_total_thrust_n`で換算。ヨーはPC側で積分し角度で渡す（提案） |
-| 17 | ミキサーの飽和優先、電圧補償、推力特性の形 | 推力特性は折れ線テーブルで始める。電池電圧は引数に入れてある |
+| ~~16~~ | ~~目標ヨーは角度か角速度か。スロットル→推力の換算~~ | **決定（rev22 + 2026-11-08）**: 目標ヨーは角度で受け、制御器へは「目標とのずれ」を±180°に折り返して渡す（`controller_input_make`）。**推力・ロール/ピッチ/ヨー指令の単位は「1モーターあたりの推力[g]」でそろえる**（オーナー了承）。理由: メモのミキサーは「全体推力 ± ロール ± ピッチ ± ヨー」と推力同士の足し引きで、推力換算も[g]なので、N・N·mにするとアーム長・ヨー係数・[N]↔[g]の換算を持ち込むだけで得るものがない。ゲインは実機で合わせるので[g]で足りる。N・N·m案は、機体の慣性から理論でゲインを決める段階になったら見直す。ヘッダの `thrust_n`→`thrust_g`、`torque_nm`→`torque_g`、`motor_x_m/y_m/spin_dir/yaw_torque_per_thrust_m` は削除（符号表1つに置き換え）。スロットル(0..1)→推力は `throttle_full_thrust_g`（仮28g）で換算（提案） |
+| ~~17~~ | ~~ミキサーの飽和優先、電圧補償、推力特性の形~~ | **決定（rev22）**: 飽和はロール・ピッチ最優先。①ヨーを削る→②4つを同じだけ上下にずらして0〜100%に収める（全体推力を犠牲に）→③モーター差が100%を超えて収まらないときだけロール・ピッチを縮める。推力→デューティは デューティ＝推力[g]÷(9.4×電池電圧[V])（HW実測、3.5〜4.2Vで直線）で電圧補償込み。**折れ線テーブル案は取りやめ**。モーターの個体差は I 項で吸収。電池電圧はGP28(ADC2)をゆっくりしたローパスに通して使う（分圧比は仮置き、TODO: HW設計書で確認）。**未決TODO: モーターの番号・位置・回転方向**。符号は params の表1か所（`mixer_sign`）に仮の値を入れてあり、プロペラを付けて回す前に必ず確定する（オーナー了承） |
 | 18 | 時間のしきい値: 通信途絶、WDT、電池低下、降下スロットル比・上限時間 | `params.h`に置く。初期値は.cで仮置き |
 | 19 | 非常停止中のループの回し方（IMUが死んでいてINT1が来ない） | 時間基準の周期で回してログとWDT餌やりを続ける（メモは「PCへ送り続ける」） |
 | 20 | 「PCとつながった」の定義。待機・通信待機での通信途絶の扱い | 最初の有効パケット受信。待機中の途絶は通信待機へ戻す案 |
@@ -181,14 +183,18 @@ SDK依存: ヘッダはどれもSDKの型を使わない（`uint`などを出さ
 
 ## 6. ディレクトリ構成（想定）
 
+ハード依存はポート層（`src/port_pico/`）に閉じ込め、PCのシミュレータはそこだけを自前の実装に差し替える。規則とポートのAPI一覧は [hw_boundary.md](hw_boundary.md)。
+
 ```
 drone_1st/
   docs/architecture.md
   firmware/
     include/          ← 今回作った .h
-    src/              ← 今後。main.c, imu_lsm6dsv16x.c, control_loop.c, ... ヘッダと1対1
-    test/             ← 提案: PCで試す純粋モジュール（mixer, flight_state, guard, spsc_ring, comm_*）
-    CMakeLists.txt    ← ステップ②で作成（PICO_BOARD=pico2_w、ライブラリ fc_imu + 試験アプリ）
+    src/              ← 純粋C11（SDKなし）。attitude, controller*, mixer, thrust_model, params, battery, cycle_timer。今後 control_loop.c など
+      port_pico/      ← Pico SDK に触る唯一の場所: imu_lsm6dsv16x, motor_pwm, batt_adc_pico, clock_wdt_pico
+    cmake/fc_sources.cmake ← ソース一覧（SDKなし。ホストのCMakeからも include できる）
+    test/             ← ステップ③aで作成: PCで試す純粋モジュール（attitude, controller_pid, mixer, thrust_model）。③b以降で flight_state, guard, spsc_ring, comm_* を足す
+    CMakeLists.txt    ← ステップ②で作成（PICO_BOARD=pico2_w、ライブラリ fc_core + fc_port_pico + 試験アプリ）
 ```
 
 起動の流れ（`main.c`、提案）: コア0で `params_set_defaults` → `ipc_init` → `multicore_launch_core1(comm_core1_entry)`（Wi-Fi/USB初期化はコア1の中） → `control_loop_init` → `control_loop_run`。WDTは初期化が済んだ後に開始し、餌やりはコア0だけが行う（コア1の停止は通信途絶として検出する）。

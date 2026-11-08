@@ -1,38 +1,27 @@
 /**
  * @file cycle_timer.c
- * @brief cycle_timer.h の実装（ステップ②では「時計」の部分だけ）。
+ * @brief 1周期ごとの時刻計測（cycle_timer.h）。SDK非依存。
  *
- * 実装済み: fc_clock_now_us64 / fc_clock_now_us32
- * スタブ（今回は何もしない）: fc_wdt_start / fc_wdt_feed / fc_wdt_caused_reboot
- *   → ウォッチドッグはステップ③（制御ループ）で本実装する。今のうちに有効にすると、
- *     ブレッドボード試験中の printf などでリセットがかかって原因が分かりにくくなるため。
- * 未実装（呼ぶとリンクエラーになる）: cycle_timing_begin / cycle_timing_end
- *   → 周期ごとの時刻ログはステップ③で作る。
+ * 時計（fc_clock_now_*）とウォッチドッグは差し替え境界（ポート）側
+ * （実機: port_pico ディレクトリの clock_wdt_pico.c）。ここは fc_clock_now_us32() だけを使う。
  */
-#include "pico/stdlib.h"
 #include "cycle_timer.h"
 
-uint64_t fc_clock_now_us64(void)
+static uint16_t sat_u16(uint32_t v)
 {
-    return time_us_64();   /* RP2350 のタイマー（1MHz）。コア0/1どちらから読んでも同じ値 */
+    return (uint16_t)(v > 65535u ? 65535u : v);
 }
 
-uint32_t fc_clock_now_us32(void)
+void cycle_timing_begin(cycle_timing_t *t, uint32_t int1_timestamp_us, uint32_t int1_count_delta)
 {
-    return time_us_32();   /* 約71分で一周する。差分は (uint32_t)(後 - 前) で取ること */
+    t->start_us = int1_timestamp_us;
+    t->t_begin_us = fc_clock_now_us32();
+    t->wake_latency_us = sat_u16((uint32_t)(t->t_begin_us - int1_timestamp_us));
+    t->int1_missed = sat_u16(int1_count_delta > 1u ? int1_count_delta - 1u : 0u);
+    t->cycle_index++;   /* 初期化は呼び出し側で0にしておく。最初の周期の番号は1 */
 }
 
-/* ---- WDT: スタブ（ステップ③で実装）---- */
-void fc_wdt_start(uint32_t timeout_ms)
+void cycle_timing_end(cycle_timing_t *t)
 {
-    (void)timeout_ms;
-}
-
-void fc_wdt_feed(void)
-{
-}
-
-bool fc_wdt_caused_reboot(void)
-{
-    return false;   /* スタブ: 常に「ウォッチドッグ起因ではない」 */
+    t->proc_us = sat_u16((uint32_t)(fc_clock_now_us32() - t->t_begin_us));
 }
