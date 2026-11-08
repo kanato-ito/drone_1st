@@ -13,6 +13,7 @@ set(FC_CORE_SOURCES
     ${_FC_ROOT}/src/controller.c
     ${_FC_ROOT}/src/controller_pid.c
     ${_FC_ROOT}/src/mixer.c
+    ${_FC_ROOT}/src/imu_mount.c
     ${_FC_ROOT}/src/thrust_model.c
     ${_FC_ROOT}/src/battery.c
     ${_FC_ROOT}/src/cycle_timer.c

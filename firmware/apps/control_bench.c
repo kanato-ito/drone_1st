@@ -35,6 +35,7 @@
 #include "controller.h"
 #include "controller_pid.h"
 #include "mixer.h"
+#include "imu_mount.h"
 #include "thrust_model.h"
 #include "battery.h"
 #include "motor_pwm.h"
@@ -162,6 +163,7 @@ int main(void)
                 motor_pwm_stop();
                 if (running) tripped = true;
             } else {
+                imu_mount_apply(&prm->imu_mount, &batch);   /* 基板の軸 → 機体の軸 */
                 attitude_update_batch(&att, &batch, dt_sample);
                 const attitude_state_t *as = attitude_get(&att);
 

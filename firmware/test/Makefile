@@ -8,7 +8,7 @@ SRC_DIR := ../src
 INC_DIR := ../include
 CFLAGS  := -std=c11 -O1 -g -Wall -Wextra -Wdouble-promotion -Wfloat-conversion -Werror -I$(INC_DIR)
 SRCS    := test_main.c $(SRC_DIR)/attitude.c $(SRC_DIR)/controller.c $(SRC_DIR)/controller_pid.c \
-           $(SRC_DIR)/mixer.c $(SRC_DIR)/thrust_model.c $(SRC_DIR)/params.c \
+           $(SRC_DIR)/mixer.c $(SRC_DIR)/imu_mount.c $(SRC_DIR)/thrust_model.c $(SRC_DIR)/params.c \
            $(SRC_DIR)/battery.c $(SRC_DIR)/cycle_timer.c fake_port.c
 PURE_SRCS := $(wildcard $(SRC_DIR)/*.c)
 HDRS    := $(wildcard $(INC_DIR)/*.h)

@@ -58,7 +58,7 @@ void control_loop_init(control_loop_t *c, const params_t *params);
  * 1周期ぶんの処理を行う（INT1が来た後の処理）。ここでは待たない。
  * INT1の記録 ev は呼び出し側が渡す: 実機では control_loop_run が imu_wait_int1 の結果を、
  * シミュレータは仮想時間で作った記録を渡して直接呼ぶ（待ちも実時間も要らない）。
- * 中では imu_read_fifo、motor_pwm_*、battery_update、fc_clock_*、fc_wdt_feed、
+ * 中では imu_read_fifo（直後に imu_mount_apply で基板の軸→機体の軸へ並べ替える。③bで追加）、motor_pwm_*、battery_update、fc_clock_*、fc_wdt_feed、
  * mailbox / ipc_flags を、それぞれのヘッダ越しにだけ呼ぶ（SDKには触らない）。
  * 呼ぶコア: コア0。頻度: 約940Hz。実装はステップ③b。
  */
