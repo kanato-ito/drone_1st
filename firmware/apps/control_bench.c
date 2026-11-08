@@ -124,15 +124,39 @@ int main(void)
     uint32_t last_report_us = fc_clock_now_us32();
     uint32_t sec = 0;
 
+    uint32_t miss = 0, rescues = 0, overruns = 0, truncs = 0;
+    bool stalled = false;       /* 直近の待ちがタイムアウトで、ピンもLow（IMUが止まっている） */
+    bool pending = false;       /* 読み終わってもINT1がHigh = 次の立ち上がりが来ない。待たずにもう一度読む */
+
     for (;;) {
-        bool got = imu_wait_int1(FC_INT1_TIMEOUT_US, &ev);
+        bool got;
+        if (pending) {
+            /* 立ち上がりを待っても来ないので、そのまま読む（architecture.md #10/#12）。開始時刻は今 */
+            got = true;
+            ev.timestamp_us = fc_clock_now_us32();
+        } else {
+            got = imu_wait_int1(FC_INT1_TIMEOUT_US, &ev);
+            if (!got) {
+                timeouts++;
+                if (imu_int1_pin_is_high()) {
+                    /* ピンはHighのまま = 立ち上がりを取りこぼした。読んで救出する（INT1自体は生きている） */
+                    rescues++;
+                    got = true;
+                    ev.timestamp_us = fc_clock_now_us32();
+                }
+            }
+        }
+        stalled = !got;
         if (!got) {
-            timeouts++;
-            /* INT1が来ない = 姿勢が更新できない。モーターを止め、電源入れ直しまで再開しない */
+            /* INT1が来ずピンもLow = IMUが止まった（配線・電源・リセット）。モーターを止め、電源入れ直しまで再開しない */
             motor_pwm_stop();
             if (running) tripped = true;
         } else {
             imu_status_t rs = imu_read_fifo(&batch);
+            if (batch.fifo_overrun) overruns++;
+            if (batch.truncated) truncs++;
+            pending = imu_int1_pin_is_high();
+            if (pending) miss++;
             if (rs != IMU_OK) {
                 read_errors++;
                 motor_pwm_stop();
@@ -218,10 +242,20 @@ int main(void)
                        (double)out.thrust_g, (double)out.torque_g[0], (double)out.torque_g[1], (double)out.torque_g[2],
                        (double)duty[0], (double)duty[1], (double)duty[2], (double)duty[3], mix.saturated ? 1 : 0);
             }
-            printf(" Vbat=%.2f%s proc_us avg/max=%u/%u over=%u TMO=%u ERR=%u PWM=%s\n",
+            printf(" Vbat=%.2f%s proc_us avg/max=%u/%u over=%u TMO=%u ERR=%u MISS=%u RESC=%u OVR=%u TRUNC=%u INT1pin=%d PWM=%s\n",
                    (double)batt_v_used, no_batt ? "(仮:未接続)" : "",
                    (unsigned)avg, (unsigned)s.proc_max_us, (unsigned)s.over_budget,
-                   (unsigned)timeouts, (unsigned)read_errors, PWM_ENABLED ? "ON" : "OFF");
+                   (unsigned)timeouts, (unsigned)read_errors, (unsigned)miss, (unsigned)rescues,
+                   (unsigned)overruns, (unsigned)truncs, imu_int1_pin_is_high() ? 1 : 0, PWM_ENABLED ? "ON" : "OFF");
+            if (stalled) {
+                /* INT1が止まったとき、IMUが生きているか（SPIで返事をするか・設定が残っているか）を出す */
+                imu_reg_readback_t rb[IMU_READBACK_MAX];
+                uint8_t n = imu_config_readback(rb, IMU_READBACK_MAX);
+                unsigned bad = 0;
+                for (uint8_t i = 0; i < n; i++) if ((rb[i].value ^ rb[i].expected) & rb[i].mask) bad++;
+                printf("       IMU診断: WHO_AM_I=%s 設定の不一致=%u/%u\n",
+                       imu_whoami_check() == IMU_OK ? "OK" : "NG", bad, (unsigned)n);
+            }
             /* 平均/最大は1秒ごとにクリア。over は累計 */
             s.cycles = 0; s.proc_sum_us = 0; s.proc_max_us = 0;
             last_report_us = now;
