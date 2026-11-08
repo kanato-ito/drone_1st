@@ -19,7 +19,7 @@
 
 | ヘッダ | 関数 | 実機の実装 | 偽物が守ること | 呼ぶ人・頻度 |
 | --- | --- | --- | --- | --- |
-| `imu_lsm6dsv16x.h` | `imu_config_default` `imu_init` `imu_whoami_check` `imu_config_readback` `imu_spi_actual_baud_hz` `imu_fifo_flush` `imu_on_int1_edge` `imu_wait_int1` `imu_int1_pin_is_high` `imu_read_fifo` `imu_sample_period_s` | `port_pico/imu_lsm6dsv16x.c` | `imu_wait_int1` はタイムアウトまで待ち、来なければ false。`imu_read_fifo` は `imu_batch_t` を本物と同じ物理単位（gyro は rad/s、accel は g）で埋める。`imu_sample_period_s` は本物のサンプル間隔。`imu_int1_pin_is_high` は false でよい | コア0。待ち・読み出しは1周期に1回（約940Hz）、初期化は起動時 |
+| `imu_lsm6dsv16x.h` | `imu_config_default` `imu_init` `imu_whoami_check` `imu_config_readback` `imu_spi_actual_baud_hz` `imu_fifo_flush` `imu_on_int1_edge` `imu_wait_int1` `imu_int1_pin_is_high` `imu_read_fifo` `imu_sample_period_s` | `port_pico/imu_lsm6dsv16x.c` | `imu_wait_int1` はタイムアウトまで待ち、来なければ false。`imu_read_fifo` は `imu_batch_t` を本物と同じ物理単位（gyro は rad/s、accel は g、軸はIMU基板の軸のまま）で埋める。`imu_sample_period_s` は本物のサンプル間隔。`imu_int1_pin_is_high` は false でよい | コア0。待ち・読み出しは1周期に1回（約940Hz）、初期化は起動時 |
 | `motor_pwm.h` | `motor_pwm_init` `motor_pwm_set` `motor_pwm_stop` | `port_pico/motor_pwm.c` | `set` で受けたデューティ(0..1、範囲外とNaNは0)を覚える。`stop` で全部0 | コア0。`set` は1周期に1回、`stop` は必要なとき |
 | `cycle_timer.h`（時計・WDT） | `fc_clock_now_us64` `fc_clock_now_us32` `fc_wdt_start` `fc_wdt_feed` `fc_wdt_caused_reboot` | `port_pico/clock_wdt_pico.c` | 時計は単調増加（仮想時間でよい）。us32 は us64 の下位32bit。WDTは空でよい（`caused_reboot` は false） | 時計は随時（両コア）。`feed` はコア0、1周期に1回 |
 | `batt_adc.h` | `batt_adc_init` `batt_adc_read_raw` | `port_pico/batt_adc_pico.c` | 12bitの生カウント(0..4095)を返す。分圧比などの換算は `battery.c` が行うので偽物はしない | コア0。読み出しは数周期に1回（数µs） |

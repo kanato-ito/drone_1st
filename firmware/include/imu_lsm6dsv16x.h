@@ -6,7 +6,7 @@
  * 偽物（フェイク）が守ること:
  *   - imu_wait_int1: timeout_us まで待ち、INT1が来たら true と ev を返す。来なければ false（タイムアウト）。
  *   - imu_read_fifo: imu_batch_t を埋める。count が有効数、samples[] は本物と同じ物理単位
- *     （gyro_rps = rad/s、accel_g = g。機体座標系）。
+ *     （gyro_rps = rad/s、accel_g = g。軸はIMU基板の軸のまま。取り付け補正は未実装で、本物も補正しない）。
  *   - imu_sample_period_s: 本物と同じサンプル間隔 [s]（1/ODR。姿勢推定のdtに使う）。
  *   - imu_int1_pin_is_high: 単に false を返してもよい。
  *
