@@ -90,8 +90,8 @@ pico_add_extra_outputs(control_bench)
 # ---- 試験アプリ loop_bench（ステップ③b）----
 # 状態機械つきの制御ループをブレッドボードで回す。PWM出力は control_bench と同じく既定で無効
 # （上の FC_BENCH_PWM_ENABLE=ON のときだけ有効。必ずプロペラを外す。デューティ上限 0.30）。
-# mailbox / ipc_flags は apps/bench_ipc_stub.c の仮の代用品（ステップ④で本物に置き換える）。
-add_executable(loop_bench apps/loop_bench.c apps/bench_ipc_stub.c)
+# mailbox / ipc_flags は src/ の本物（fc_core）。ベンチではコア0がPC役でメールボックスに書く（書く人は1人）。
+add_executable(loop_bench apps/loop_bench.c)
 target_compile_options(loop_bench PRIVATE -Wall -Wextra)
 target_link_libraries(loop_bench PRIVATE fc_core fc_port_pico)
 if(FC_BENCH_PWM_ENABLE)

@@ -216,10 +216,12 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev)
     {
         const uint32_t seq = mailbox_seq();
         if (seq != 0u && seq != c->last_mb_seq) {
-            mailbox_read(&c->target);
-            c->last_mb_seq = seq;
-            c->last_new_packet_us = now;
-            c->have_packet = true;
+            /* 読み直しが尽きたら(false)前回の値のまま。seq を更新しないので次の周期で再試行 */
+            if (mailbox_read(&c->target)) {
+                c->last_mb_seq = seq;
+                c->last_new_packet_us = now;
+                c->have_packet = true;
+            }
         }
     }
     const bool comm_lost = c->have_packet &&

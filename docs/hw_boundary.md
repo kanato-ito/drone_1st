@@ -28,8 +28,13 @@
 
 ## 4. ポートではないもの
 
-`mailbox`、`ipc_flags`、`spsc_ring` は、`<stdatomic.h>` を使う純粋C11で `src/` に実装する（ステップ④）。
+`mailbox`、`ipc_flags` は、`<stdatomic.h>` を使う純粋C11で `src/`（`mailbox.c`、`ipc_flags.c`）に**実装済み**（ステップ③bで前倒し）。
+`spsc_ring` と `ipc.c` のキュー側はステップ④。
 SDKに触らないので、シミュレータは本物をそのままリンクし、コア1の役（パケットを書く、旗を立てる、ログを読む）を自分で演じる。
+
+- `mailbox_read` は `bool` を返す。書き込み途中で読み直しが上限（16回）を超えたら `false`（`dst` は変えない。呼ぶ側は前回の値で続け、次の周期で再試行。提案）。
+- `mailbox_write` の割り込み禁止は呼ぶ側の責任（`src/` はSDKに触れない）。
+- 旗の実体と `ipc_flags()` は `ipc_flags.c` にある。
 
 ## 5. ホストのプロジェクトから使う
 
@@ -60,5 +65,5 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev);
 - シミュレータ: 仮想時間で作った `ev` を渡して直接呼ぶ（`imu_int1_pin_is_high` は false を返してよい）。
 - 中から呼ぶのは `imu_init`（起動時）`imu_read_fifo`、`motor_pwm_*`、`battery_update`、`fc_clock_*`、`fc_wdt_*`、mailbox / ipc_flags だけ。すべてヘッダ越し。
 - リンクに必要なもの: 上のポート4つ（imu, motor_pwm, 時計/WDT, batt_adc）に加え、`mailbox_*` `ipc_flags_*` と `ipc_flags()`（ipc.h）。
-  本物はステップ④。それまでの偽物は `test/fake_ipc.c`（ホスト試験）と `apps/bench_ipc_stub.c`（loop_bench）。
+  本物は `src/mailbox.c` と `src/ipc_flags.c`（実装済み）なので、シミュレータもホスト試験もそのままリンクする。
 - 例: `test/test_loop.c` が、ここに書いたとおりの使い方（偽物の IMU を `fake_imu_*` で操作）をしている。

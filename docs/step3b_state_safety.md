@@ -15,8 +15,9 @@
 | `firmware/src/port_pico/clock_wdt_pico.c` | WDTの本実装（`watchdog_enable` / `watchdog_update` / `watchdog_enable_caused_reboot`） |
 | `firmware/src/params.c` | 安全系しきい値の検査を追加（`params_validate`） |
 | `firmware/apps/loop_bench.c` | ブレッドボード試験アプリ（キーでPC役を演じる） |
-| `firmware/apps/bench_ipc_stub.c` | **仮の代用品**: mailbox / ipc_flags の最小実装。ステップ④で本物に置き換える |
-| `firmware/test/` | 偽物（`fake_port.c`: IMU・PWM・時計・WDT・ADC、`fake_ipc.c`: mailbox・ipc_flags）と、`test_fsm.c` `test_guard_descent.c` `test_loop.c` |
+| `firmware/src/mailbox.c` | メールボックスの本物（シーケンスロック、純粋C11 `<stdatomic.h>`）。オーナー実装 `mail_box.c` の考え方を取り込み、`__dmb()` は acquire/release のフェンスに置き換えた。読み直しは上限16回で、尽きたら `false`（**提案**。owner版は無限に待つ） |
+| `firmware/src/ipc_flags.c` | 旗の本物（estop・disarm_req・disarm_ack の3語、書く人は各1人）。実体と `ipc_flags()` もここ |
+| `firmware/test/` | 偽物（`fake_port.c`: IMU・PWM・時計・WDT・ADC、mailbox・ipc_flags は本物をそのままリンク）と、`test_fsm.c` `test_guard_descent.c` `test_ipc.c` `test_loop.c`。コア1の役は試験が演じる |
 
 ヘッダの変更（`control_loop.h` ほか）:
 - `control_loop_run_once` は `bool` を返す（INT1ピンが読み終えてもHigh = 取りこぼしなら true）。`ev==NULL` は「IMU途絶の周期」。
@@ -150,13 +151,14 @@ architecture.md 3章の順序のうち、**IMU読み出しを最初にした**�
 make -C firmware/test
 ```
 
-`ALL PASS: 53 tests, 1456 checks`（purity も OK）が出れば合格。③bで足した試験:
+`ALL PASS: 56 tests, 1503 checks`（purity も OK）が出れば合格。③bで足した試験:
 
 | 対象 | 内容 |
 | --- | --- |
 | fsm | BOOT / WAIT_COMM / STANDBY / FLIGHT / DESCENT の全遷移と優先順、アーム条件（辺・水平・スロットル0・ディスアーム同時）、操作者の非常停止を全状態から、非常停止は乱数入力5000通りでも抜けない、乱数20万ステップで不変条件（FLIGHTへはSTANDBYのアーム条件からのみ、DESCENTはFLIGHTからのみ、など） |
 | guard | 傾き・角速度（境界値、合成、NaN）・人の指示・出力NaN/Inf・計算時間・張りつき（ちょうどN周期、外れたら数え直し、負側）、ラッチ、後の異常で理由を上書きしない、reset |
 | descent | 目標推力＝比×推定、ヨー保持、ホバリング推定の収束と異常値の無視、衝撃なしの静かさは着地でない、衝撃→静かさ500ms、動き・加速度のずれで数え直し、バウンド、時間切れ（64bit時刻） |
+| ipc | mailbox: 書いて読む・seq は +2 で常に偶数・未書き込みは0・上書き・書き込み途中（奇数）は読み直し上限で失敗して dst を変えず公開 seq も進めない。ipc_flags: estop は立てるだけ、disarm カウンタ（何回でも1回分、処理後の要求は残る、32bit一周）、acknowledge は estop に触れない |
 | loop | 起動（PWM0→WDT開始）、IMU無応答・WDT再起動、ライフサイクル（通信待機→待機→アーム→飛行→ディスアーム[カウンタ/パケット旗]→再アーム）、アーム条件、通信途絶→降下→着地→非常停止、降下→時間切れ、電池低下→降下、操作者の非常停止（全状態×旗2種）と抜けないこと、傾き60°超、IMU途絶（タイムアウト・救出・連続失敗・降下中）、INT1取りこぼし、ログと周期時間、PWM出力無効・デューティ上限、偽の方策（使用・取り上げ各原因・ラッチ・選び直し・降下で呼ばない） |
 
 `loop` の全試験で毎周期 ①停止状態では `motor_pwm_set` を呼ばずデューティが0、②WDTは `run_once` ごとにちょうど1回（非常停止中も）を確かめている。
@@ -213,7 +215,8 @@ loop_bench だけが、`printf` が詰まってもリセットしないよう、
 
 ## 8. ステップ④に残したこと（TODO(④)）
 
-- `mailbox.c` / `ipc_flags.c` の本物（オーナー実装の取り込み）。`apps/bench_ipc_stub.c` を捨てる。
+- （mailbox / ipc_flags の本物は③bで前倒しして実装済み。残るのはキュー側: `spsc_ring` `ipc.c`）
+- 書く側の割り込み禁止: `src/` はSDKに触れないので、実機でコア1の割り込みの中から `mailbox_write` するなら呼ぶ側が止める（`mailbox.h` に注記）。
 - `ipc_log_push(&c->log)`（`control_loop.c` の `build_log` の直後）。ログの `seq` / `dropped_total` は push 側が付ける。
 - ループの最初の `ipc_cmd_pop` とコマンド処理（変更系は `control_loop_params_change_allowed()` が true のときだけ）。制御器の選択は `control_loop_select_controller`。
 - 非常停止中の「PCへの報告」（ログ送信）。

@@ -194,7 +194,7 @@ drone_1st/
       port_pico/      ← Pico SDK に触る唯一の場所: imu_lsm6dsv16x, motor_pwm, batt_adc_pico, clock_wdt_pico
     cmake/fc_sources.cmake ← ソース一覧（SDKなし。ホストのCMakeからも include できる）
     test/             ← PCで試す純粋モジュール（③a: attitude, controller_pid, mixer, thrust_model。③b: flight_state, guard, emergency_descent, control_loop と、ポート・mailbox・ipc_flags の偽物）。④以降で spsc_ring, comm_* を足す
-    apps/             ← ブレッドボード試験アプリ（imu_fifo_test, control_bench, loop_bench。bench_ipc_stub.c は④で捨てる仮の代用品）
+    apps/             ← ブレッドボード試験アプリ（imu_fifo_test, control_bench, loop_bench）
     CMakeLists.txt    ← ステップ②で作成（PICO_BOARD=pico2_w、ライブラリ fc_core + fc_port_pico + 試験アプリ）
 ```
 

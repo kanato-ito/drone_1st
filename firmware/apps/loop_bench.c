@@ -3,8 +3,9 @@
  * @brief ステップ③bのブレッドボード試験: 状態機械つきの制御ループ（control_loop）を実機で回す。
  *
  * コア0で control_loop_step を回し、周期の合間に USB シリアルから1文字コマンドを読んで「PC」の役を演じる
- * （mailbox にパケットを書き、旗を立てる）。mailbox / ipc_flags は apps/bench_ipc_stub.c の仮の代用品
- * （ステップ④で本物に置き換える）。
+ * （mailbox にパケットを書き、旗を立てる）。mailbox / ipc_flags は src/ の本物。
+ * 本来 mailbox を書くのはコア1だが、このベンチはコア0だけで動き、書く人が1人（コア0）なので
+ * 周期の合間にコア0から書いても seqlock の約束は守られる。
  *
  * ★安全★ モーターへのPWMは既定で「出さない」（control_bench と同じ）。状態機械は動くが、飛行中でも
  *   ピンには0のまま。出すには CMake に -DFC_BENCH_PWM_ENABLE=ON が必要。その場合は必ずプロペラを外すこと。

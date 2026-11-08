@@ -1,6 +1,6 @@
 /**
  * @file test_loop.c
- * @brief control_loop の試験。IMU・PWM・時計・ADC・WDT・mailbox/ipc_flags をすべて偽物にして、
+ * @brief control_loop の試験。IMU・PWM・時計・ADC・WDT を偽物にして（mailbox / ipc_flags は本物）、
  *        1周期ずつ（control_loop_step）回して状態の流れと安全動作を確かめる。
  *
  * 偽物の時計は INT1 待ちが進める（1周期 1064µs、タイムアウトは5000µs）。
@@ -10,8 +10,19 @@
 #include <stdlib.h>
 #include "control_loop.h"
 #include "fake_port.h"
-#include "fake_ipc.h"
+#include "mailbox.h"
+#include "ipc_flags.h"
 #include "test_common.h"
+
+/** 本物の mailbox / ipc_flags を空に戻す（試験の最初に）。 */
+static void fake_ipc_reset(void)
+{
+    control_packet_t z;
+    memset(&z, 0, sizeof(z));
+    mailbox_write(&z);
+    mailbox_test_force_seq(0);
+    ipc_flags_init(ipc_flags());
+}
 
 static control_loop_t L;
 static params_t LP;

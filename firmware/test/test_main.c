@@ -680,11 +680,11 @@ int main(void)
         { "battery: 偽ADCの生カウント→電圧（分圧比）", test_battery_update_with_divider },
         { "cycle_timing: 遅れ・処理時間・取りこぼし", test_cycle_timing },
     };
-    const test_t *suites[] = { tests, g_tests_fsm, g_tests_guard, g_tests_descent, g_tests_loop };
+    const test_t *suites[] = { tests, g_tests_fsm, g_tests_guard, g_tests_descent, g_tests_ipc, g_tests_loop };
     const int counts[] = { (int)(sizeof(tests) / sizeof(tests[0])), g_tests_fsm_n, g_tests_guard_n,
-                           g_tests_descent_n, g_tests_loop_n };
+                           g_tests_descent_n, g_tests_ipc_n, g_tests_loop_n };
     int n = 0, failed_tests = 0;
-    for (int s = 0; s < 5; s++) {
+    for (int s = 0; s < 6; s++) {
         for (int i = 0; i < counts[s]; i++) {
             int before = g_fail;
             g_test_checks = 0;

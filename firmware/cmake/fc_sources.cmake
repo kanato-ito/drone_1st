@@ -21,6 +21,8 @@ set(FC_CORE_SOURCES
     ${_FC_ROOT}/src/guard.c
     ${_FC_ROOT}/src/emergency_descent.c
     ${_FC_ROOT}/src/control_loop.c
+    ${_FC_ROOT}/src/mailbox.c
+    ${_FC_ROOT}/src/ipc_flags.c
 )
 
 set(FC_PORT_PICO_SOURCES
