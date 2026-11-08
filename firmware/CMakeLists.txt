@@ -31,45 +31,32 @@ project(drone_fw C CXX ASM)
 
 pico_sdk_init()
 
-# ---- ライブラリ fc_imu: IMU と時計。試験アプリと本体の両方からリンクする ----
-add_library(fc_imu STATIC
-    src/imu_lsm6dsv16x.c
-    src/cycle_timer.c
-)
-target_include_directories(fc_imu PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include)
-target_link_libraries(fc_imu PUBLIC
+# ---- ソース一覧（SDKに触らない。ホストPCのCMakeからも使う）----
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/fc_sources.cmake)
+
+# ---- ライブラリ fc_core: 純粋C11の本体（SDK不要。ホストPCでもそのままビルドできる）----
+add_library(fc_core STATIC ${FC_CORE_SOURCES})
+target_include_directories(fc_core PUBLIC ${FC_INCLUDE_DIR})
+target_compile_options(fc_core PRIVATE -Wall -Wextra)
+
+# ---- ライブラリ fc_port_pico: Pico SDK に触る部分（差し替え境界。docs/hw_boundary.md）----
+add_library(fc_port_pico STATIC ${FC_PORT_PICO_SOURCES})
+target_link_libraries(fc_port_pico PUBLIC
+    fc_core
     pico_stdlib
     hardware_spi
     hardware_gpio
     hardware_sync
-)
-target_compile_options(fc_imu PRIVATE -Wall -Wextra)
-
-# ---- ライブラリ fc_control: 制御の信号の流れ（ステップ③a）。SDKに触らない純粋モジュールはホストPCでも試験できる（test/） ----
-add_library(fc_control STATIC
-    src/params.c
-    src/attitude.c
-    src/controller.c
-    src/controller_pid.c
-    src/mixer.c
-    src/thrust_model.c
-    src/battery.c
-    src/motor_pwm.c
-)
-target_include_directories(fc_control PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include)
-target_link_libraries(fc_control PUBLIC
-    fc_imu
-    pico_stdlib
     hardware_pwm
     hardware_adc
     hardware_clocks
 )
-target_compile_options(fc_control PRIVATE -Wall -Wextra)
+target_compile_options(fc_port_pico PRIVATE -Wall -Wextra)
 
 # ---- 試験アプリ imu_fifo_test ----
 add_executable(imu_fifo_test apps/imu_fifo_test.c)
 target_compile_options(imu_fifo_test PRIVATE -Wall -Wextra)
-target_link_libraries(imu_fifo_test PRIVATE fc_imu)
+target_link_libraries(imu_fifo_test PRIVATE fc_core fc_port_pico)
 
 pico_set_program_name(imu_fifo_test "imu_fifo_test")
 pico_set_program_version(imu_fifo_test "0.1")
@@ -87,7 +74,7 @@ option(FC_BENCH_PWM_ENABLE "control_bench でモーターPWMを実際に出す�
 
 add_executable(control_bench apps/control_bench.c)
 target_compile_options(control_bench PRIVATE -Wall -Wextra)
-target_link_libraries(control_bench PRIVATE fc_control)
+target_link_libraries(control_bench PRIVATE fc_core fc_port_pico)
 if(FC_BENCH_PWM_ENABLE)
     message(WARNING "FC_BENCH_PWM_ENABLE=ON: control_bench がモーターPWMを出します。プロペラを外してください")
     target_compile_definitions(control_bench PRIVATE FC_BENCH_PWM_ENABLE=1)
@@ -101,5 +88,5 @@ pico_add_extra_outputs(control_bench)
 
 # ---- 本体 drone_fw（ステップ③以降）の雛形 ----
 # add_executable(drone_fw src/main.c ...)
-# target_link_libraries(drone_fw PRIVATE fc_imu)
+# target_link_libraries(drone_fw PRIVATE fc_core fc_port_pico)
 # pico_add_extra_outputs(drone_fw)

@@ -2,7 +2,7 @@
  * @file control_loop.h
  * @brief コア0の制御ループ本体。INT1待ち → FIFO → 姿勢 → 制御器 → ミキサー → PWM。
  *
- * 呼び出し順は docs/architecture.md の「1周期の流れ」を参照。
+ * ハード依存の境界は docs/hw_boundary.md。呼び出し順は docs/architecture.md の「1周期の流れ」を参照。
  * INT1の割り込みの中では何もせず（時刻記録のみ）、処理はメインループ側で行う。
  */
 #ifndef CONTROL_LOOP_H
@@ -55,13 +55,17 @@ typedef struct {
 void control_loop_init(control_loop_t *c, const params_t *params);
 
 /**
- * 1周期ぶんの処理を行う（INT1が来た後の処理。待ちは含まない）。
- * 呼ぶコア: コア0。頻度: 約940Hz。ステップ③の試験ではこれを単体で呼べる。
+ * 1周期ぶんの処理を行う（INT1が来た後の処理）。ここでは待たない。
+ * INT1の記録 ev は呼び出し側が渡す: 実機では control_loop_run が imu_wait_int1 の結果を、
+ * シミュレータは仮想時間で作った記録を渡して直接呼ぶ（待ちも実時間も要らない）。
+ * 中では imu_read_fifo、motor_pwm_*、battery_update、fc_clock_*、fc_wdt_feed、
+ * mailbox / ipc_flags を、それぞれのヘッダ越しにだけ呼ぶ（SDKには触らない）。
+ * 呼ぶコア: コア0。頻度: 約940Hz。実装はステップ③b。
  */
-void control_loop_run_once(control_loop_t *c);
+void control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev);
 
 /**
- * メインループ。imu_wait_int1(5ms) → run_once を繰り返す。タイムアウト時は
+ * メインループ（実機用）。imu_wait_int1(5ms) → run_once(c, &ev) を繰り返す。タイムアウト時は
  * 飛行中ならモーターを止めて非常停止へ。戻らない。
  * 呼ぶコア: コア0（main から）。頻度: 起動時に1回呼んだら戻らない。
  */

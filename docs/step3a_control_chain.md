@@ -12,13 +12,14 @@ IMU の値から、4つのモーターに出すデューティ比を計算する
 | `firmware/src/controller_pid.c` | 2段PID×3軸 |
 | `firmware/src/mixer.c` | 符号表で4モーターに配る、はみ出したときの処理 |
 | `firmware/src/thrust_model.c` | 推力[g]→デューティ。ミキサーと分けた（理由は 3.4） |
-| `firmware/src/motor_pwm.c` | 20kHz PWM 4ch（M1とM4は同じスライス0）、`motor_pwm_stop` |
-| `firmware/src/battery.c` | ADC2（GP28）の読み取りとローパス |
+| `firmware/src/port_pico/motor_pwm.c` | 20kHz PWM 4ch（M1とM4は同じスライス0）、`motor_pwm_stop` |
+| `firmware/src/battery.c` | 電池電圧のローパスと低下判定（純粋C。生カウントから電圧への換算もここ） |
+| `firmware/src/port_pico/batt_adc_pico.c` | ADC2（GP28）の12bit読み取り（`batt_adc.h` の実機実装） |
 | `firmware/src/params.c` | 既定値（すべて仮。ゲインは小さめの安全側） |
 | `firmware/test/` | ホストPC用の単体試験（Pico SDK 不要） |
 | `firmware/apps/control_bench.c` | ブレッドボード試験アプリ |
 
-SDK に触るのは `motor_pwm.c` と `battery.c` だけ。残りは PC の gcc で試験でき、PCのシミュレータからもそのままつなげる（2026-11-08 方針: まずこの信号の流れをつなぎ、③bで状態機械が入ったら1周期まるごとに広げる。そのため③bではIMU・PWM・ADC・メールボックスを差し替えられる境界にする）。
+SDK に触るのは `src/port_pico/` のファイル（`motor_pwm.c`、`batt_adc_pico.c` など）だけ。境界の規則は [hw_boundary.md](hw_boundary.md)。残りは PC の gcc で試験でき、PCのシミュレータからもそのままつなげる（2026-11-08 方針: まずこの信号の流れをつなぎ、③bで状態機械が入ったら1周期まるごとに広げる。そのため③bではIMU・PWM・ADC・メールボックスを差し替えられる境界にする）。
 
 ## 2. 単位の決め方（2026-11-08 オーナー了承）
 

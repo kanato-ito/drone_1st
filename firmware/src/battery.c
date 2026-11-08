@@ -1,22 +1,18 @@
 /**
  * @file battery.c
- * @brief 電池電圧（GP28 = ADC2）の計測とローパス（battery.h）。
+ * @brief 電池電圧のローパスと低下判定（battery.h）。SDK非依存。
+ *
+ * ADC は差し替え境界（batt_adc.h。実機: port_pico ディレクトリの batt_adc_pico.c）の向こう側。
  */
 #include <math.h>
-#include "hardware/adc.h"
-#include "board_pins.h"
+#include "batt_adc.h"
 #include "battery.h"
-
-/* GP28 = ADC2 の対応を確認（転記ミス防止）。RP2350A は GP26..29 が ADC0..3 */
-_Static_assert(BOARD_BATT_GPIO - 26 == BOARD_BATT_ADC_INPUT, "電池電圧のGPIOとADC入力が一致しない");
 
 void battery_init(battery_state_t *b)
 {
     b->voltage_v = 0.0f; b->millivolt = 0; b->low = false; b->below_since_ms = 0;
     b->last_ms = 0; b->raw_v = 0.0f; b->primed = false; b->below = false;
-    adc_init();
-    adc_gpio_init(BOARD_BATT_GPIO);
-    adc_select_input(BOARD_BATT_ADC_INPUT);
+    batt_adc_init();
 }
 
 void battery_apply_sample(battery_state_t *b, const battery_params_t *p, float v_raw, uint32_t now_ms)
@@ -43,7 +39,7 @@ void battery_apply_sample(battery_state_t *b, const battery_params_t *p, float v
 
 void battery_update(battery_state_t *b, const battery_params_t *p, uint32_t now_ms)
 {
-    uint16_t raw = adc_read();   /* 12bit。adc_select_input は init で済み */
+    uint16_t raw = batt_adc_read_raw();   /* 12bitの生の値 */
     float v_adc = (float)raw * (p->adc_vref_v / 4095.0f);
     battery_apply_sample(b, p, v_adc * p->adc_divider_ratio, now_ms);
 }

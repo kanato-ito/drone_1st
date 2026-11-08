@@ -4,10 +4,10 @@ IMU（LSM6DSV16X）のFIFOを INT1 で起こして読めるか、ブレッドボ
 
 | ファイル | 役割 |
 | --- | --- |
-| `firmware/src/imu_lsm6dsv16x.c` | IMUドライバ（SPI・設定・INT1・FIFO読み出し）。レジスタの出典は各定義のコメントに書いた |
-| `firmware/src/cycle_timer.c` | 時計だけ。WDTは空のスタブ（ステップ③で作る） |
+| `firmware/src/port_pico/imu_lsm6dsv16x.c` | IMUドライバ（SPI・設定・INT1・FIFO読み出し）。レジスタの出典は各定義のコメントに書いた |
+| `firmware/src/port_pico/clock_wdt_pico.c` | 時計だけ。WDTは空のスタブ（ステップ③で作る） |
 | `firmware/apps/imu_fifo_test.c` | 試験アプリ。1秒に1行、統計を表示する |
-| `firmware/CMakeLists.txt` | ライブラリ `fc_imu` と試験アプリ `imu_fifo_test`。あとで本体 `drone_fw` を足せる形 |
+| `firmware/CMakeLists.txt` | ライブラリ `fc_core` / `fc_port_pico` と試験アプリ `imu_fifo_test`。あとで本体 `drone_fw` を足せる形 |
 
 ## 1. 配線（以前の GP16〜19 から基板のピンへ）
 
@@ -95,6 +95,6 @@ imu_init: OK (0)
 
 ## 5. 確認できなかったこと・提案
 
-- **FIFOを複数ワード、1回のCS区間で続けて読めるか**: ST公式ドライバは「TAGから7バイトを1回読む」形だけで、7バイト読んだあとアドレスが0x78に折り返すかは分からなかった。そのため既定は1ワードごとにCSを切る形（`IMU_FIFO_WORDS_PER_CS=1`）。データシートで折り返しが確認できたら、`firmware/CMakeLists.txt` の `fc_imu` に `target_compile_definitions(fc_imu PRIVATE IMU_FIFO_WORDS_PER_CS=16)` を足して read_us を比べられる。間違っていればタグが想定外になり `ERR` が増える。
+- **FIFOを複数ワード、1回のCS区間で続けて読めるか**: ST公式ドライバは「TAGから7バイトを1回読む」形だけで、7バイト読んだあとアドレスが0x78に折り返すかは分からなかった。そのため既定は1ワードごとにCSを切る形（`IMU_FIFO_WORDS_PER_CS=1`）。データシートで折り返しが確認できたら、`firmware/CMakeLists.txt` の `fc_port_pico` に `target_compile_definitions(fc_port_pico PRIVATE IMU_FIFO_WORDS_PER_CS=16)` を足して read_us を比べられる。間違っていればタグが想定外になり `ERR` が増える。
 - FIFOあふれは `FIFO_OVR_IA` に加えてラッチ版も見ている（提案）。`OVR` が静止中なのに増え続けるなら、ラッチ側を外す。
 - 軸の向き・ジャイロのオフセット補正はまだしない（architecture.md #14）。今の値はセンサーの軸のまま。

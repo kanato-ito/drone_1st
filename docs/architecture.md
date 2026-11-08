@@ -183,14 +183,18 @@ SDK依存: ヘッダはどれもSDKの型を使わない（`uint`などを出さ
 
 ## 6. ディレクトリ構成（想定）
 
+ハード依存はポート層（`src/port_pico/`）に閉じ込め、PCのシミュレータはそこだけを自前の実装に差し替える。規則とポートのAPI一覧は [hw_boundary.md](hw_boundary.md)。
+
 ```
 drone_1st/
   docs/architecture.md
   firmware/
     include/          ← 今回作った .h
-    src/              ← 今後。main.c, imu_lsm6dsv16x.c, control_loop.c, ... ヘッダと1対1
+    src/              ← 純粋C11（SDKなし）。attitude, controller*, mixer, thrust_model, params, battery, cycle_timer。今後 control_loop.c など
+      port_pico/      ← Pico SDK に触る唯一の場所: imu_lsm6dsv16x, motor_pwm, batt_adc_pico, clock_wdt_pico
+    cmake/fc_sources.cmake ← ソース一覧（SDKなし。ホストのCMakeからも include できる）
     test/             ← ステップ③aで作成: PCで試す純粋モジュール（attitude, controller_pid, mixer, thrust_model）。③b以降で flight_state, guard, spsc_ring, comm_* を足す
-    CMakeLists.txt    ← ステップ②で作成（PICO_BOARD=pico2_w、ライブラリ fc_imu + 試験アプリ）
+    CMakeLists.txt    ← ステップ②で作成（PICO_BOARD=pico2_w、ライブラリ fc_core + fc_port_pico + 試験アプリ）
 ```
 
 起動の流れ（`main.c`、提案）: コア0で `params_set_defaults` → `ipc_init` → `multicore_launch_core1(comm_core1_entry)`（Wi-Fi/USB初期化はコア1の中） → `control_loop_init` → `control_loop_run`。WDTは初期化が済んだ後に開始し、餌やりはコア0だけが行う（コア1の停止は通信途絶として検出する）。

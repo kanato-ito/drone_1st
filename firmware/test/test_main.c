@@ -16,6 +16,9 @@
 #include "controller_pid.h"
 #include "mixer.h"
 #include "thrust_model.h"
+#include "battery.h"
+#include "cycle_timer.h"
+#include "fake_port.h"
 
 #define PI_F  3.14159265f
 #define DEG   0.017453293f
@@ -497,6 +500,58 @@ static void test_chain(void)
 
 typedef struct { const char *name; void (*fn)(void); } test_t;
 
+static void test_battery_update_with_divider(void)
+{
+    battery_state_t b;
+    fake_batt_init_calls = 0;
+    battery_init(&b);
+    CHECK(fake_batt_init_calls == 1);          /* 初期化は batt_adc_init を呼ぶ */
+    /* 生カウント 2048 → 2048/4095 × vref × 分圧比。最初の1回はローパスを通さず採用する */
+    fake_batt_raw = 2048;
+    battery_update(&b, &P.battery, 1000);
+    float expect = 2048.0f * (P.battery.adc_vref_v / 4095.0f) * P.battery.adc_divider_ratio;
+    CHECK_NEAR(b.raw_v, expect, 1.0e-4f);
+    CHECK_NEAR(b.voltage_v, expect, 1.0e-4f);
+    CHECK(b.millivolt == (uint16_t)(expect * 1000.0f));
+    /* フルスケール（4095）は vref × 分圧比 */
+    fake_batt_raw = 4095;
+    battery_update(&b, &P.battery, 1001);
+    CHECK_NEAR(b.raw_v, P.battery.adc_vref_v * P.battery.adc_divider_ratio, 1.0e-4f);
+}
+
+static void test_cycle_timing(void)
+{
+    cycle_timing_t t = {0};
+    fake_now_us = 10300;                        /* INT1(10000)から300µs遅れて処理開始 */
+    cycle_timing_begin(&t, 10000, 1);
+    CHECK(t.cycle_index == 1);
+    CHECK(t.start_us == 10000);
+    CHECK(t.t_begin_us == 10300);
+    CHECK(t.wake_latency_us == 300);
+    CHECK(t.int1_missed == 0);
+    fake_now_us = 10300 + 640;
+    cycle_timing_end(&t);
+    CHECK(t.proc_us == 640);
+
+    fake_now_us = 20100;                        /* INT1が3回ぶん進んだ → 取りこぼし2 */
+    cycle_timing_begin(&t, 20000, 3);
+    CHECK(t.cycle_index == 2);
+    CHECK(t.int1_missed == 2);
+    CHECK(t.wake_latency_us == 100);
+
+    fake_now_us = 100000;                       /* 遅れが65535超 → 飽和 */
+    cycle_timing_begin(&t, 0, 100000);
+    CHECK(t.wake_latency_us == 65535);
+    CHECK(t.int1_missed == 65535);
+    fake_now_us = 100000 + 70000;
+    cycle_timing_end(&t);
+    CHECK(t.proc_us == 65535);
+
+    fake_now_us = 5;                            /* 32bitの一周をまたいでも差分は正しい */
+    cycle_timing_begin(&t, 0xFFFFFFF0u, 1);
+    CHECK(t.wake_latency_us == 21);
+}
+
 int main(void)
 {
     params_set_defaults(&P);
@@ -517,6 +572,8 @@ int main(void)
         { "mixer: 乱数入力で範囲と素通し", test_mixer_fuzz },
         { "thrust: 推力→デューティの式", test_thrust_model },
         { "chain: 姿勢→PID→ミキサー→デューティ", test_chain },
+        { "battery: 偽ADCの生カウント→電圧（分圧比）", test_battery_update_with_divider },
+        { "cycle_timing: 遅れ・処理時間・取りこぼし", test_cycle_timing },
     };
     int n = (int)(sizeof(tests) / sizeof(tests[0]));
     int failed_tests = 0;
