@@ -332,9 +332,9 @@ static void test_mixer_sign_table(void)
     memcpy(bad, P.airframe.mixer_sign, sizeof(bad));
     bad[1][0] = 0;
     CHECK(!mixer_sign_table_valid(bad));
-    /* 対角（M1とM3、M2とM4）が同じ回転方向 = ヨーの符号が同じ */
-    CHECK(P.airframe.mixer_sign[0][2] == P.airframe.mixer_sign[2][2]);
-    CHECK(P.airframe.mixer_sign[1][2] == P.airframe.mixer_sign[3][2]);
+    /* 対角（M1とM4、M2とM3）が同じ回転方向 = ヨーの符号が同じ */
+    CHECK(P.airframe.mixer_sign[0][2] == P.airframe.mixer_sign[3][2]);
+    CHECK(P.airframe.mixer_sign[1][2] == P.airframe.mixer_sign[2][2]);
     CHECK(P.airframe.mixer_sign[0][2] != P.airframe.mixer_sign[1][2]);
     CHECK(params_validate(&P));
 }
@@ -353,8 +353,8 @@ static void test_mixer_signs_and_sum(void)
     for (int i = 0; i < 4; i++) CHECK_NEAR(r.motor_g[i], 10.0f + 3.0f * af->mixer_sign[i][1], 1e-5f);
     u = U(10, 0, 0, 1);   /* ヨー: 対角の2つが上がり、残りが下がる */
     mixer_mix(af, &u, MAXG, &r);
-    CHECK_NEAR(r.motor_g[0], r.motor_g[2], 1e-5f);
-    CHECK_NEAR(r.motor_g[1], r.motor_g[3], 1e-5f);
+    CHECK_NEAR(r.motor_g[0], r.motor_g[3], 1e-5f);   /* M1とM4（時計回り） */
+    CHECK_NEAR(r.motor_g[1], r.motor_g[2], 1e-5f);   /* M2とM3（反時計回り） */
     CHECK_NEAR(r.motor_g[0] + r.motor_g[1] + r.motor_g[2] + r.motor_g[3], 40.0f, 1e-4f);
     CHECK(r.motor_g[0] != r.motor_g[1]);
     u = U(10, 1, 2, 3);   /* 3軸まとめて。重ね合わせ */
@@ -385,8 +385,8 @@ static void test_mixer_saturation(void)
     CHECK_NEAR(r.shift_g, -3.0f, 1e-5f);           /* 28+5=33 → 30 */
     CHECK_NEAR(r.rp_scale, 1.0f, 0.0f);
     for (int i = 0; i < 4; i++) CHECK_NEAR(r.motor_g[i], 25.0f + 5.0f * af->mixer_sign[i][0], 1e-4f);
-    /* ロールの差（モーター同士の差10g）は守られている */
-    CHECK_NEAR(fabsf(r.motor_g[0] - r.motor_g[1]), 10.0f, 1e-4f);
+    /* ロールの差（右のM1と左のM3の差10g）は守られている */
+    CHECK_NEAR(fabsf(r.motor_g[0] - r.motor_g[2]), 10.0f, 1e-4f);
     sum = r.motor_g[0] + r.motor_g[1] + r.motor_g[2] + r.motor_g[3];
     CHECK_NEAR(sum, 4.0f * 25.0f, 1e-3f);
 
@@ -606,6 +606,63 @@ static void test_imu_mount(void)
     CHECK(!params_validate(&p));
 }
 
+/* 確定した配置（設計メモ 2026-11-08）で、物理的な向きが合っているか。
+ * 基板の軸で作った加速度 → axis_map → 姿勢 → PID → ミキサー で、傾きを戻す向きのモーターが上がるか */
+static void physical_tilt(float board_ax, float board_ay, float board_az, attitude_state_t *out_as)
+{
+    attitude_estimator_t a;
+    attitude_init(&a, &P.attitude);
+    imu_batch_t b; memset(&b, 0, sizeof(b));
+    b.count = 8;
+    for (int k = 0; k < 8; k++) { b.samples[k].accel_g.x = board_ax; b.samples[k].accel_g.y = board_ay; b.samples[k].accel_g.z = board_az; }
+    for (int n = 0; n < 4000; n++) {   /* 約4.3s。τ=0.5s の相補フィルタが収束する */
+        imu_batch_t c = b;
+        imu_mount_apply(&P.imu_mount, &c);
+        attitude_update_batch(&a, &c, 1.0f / 7520.0f);
+    }
+    *out_as = *attitude_get(&a);
+}
+
+static void test_physical_signs(void)
+{
+    const float s20 = sinf(20.0f * 3.14159265f / 180.0f), c20 = cosf(20.0f * 3.14159265f / 180.0f);
+    const airframe_params_t *af = &P.airframe;
+    pid_controller_t pid; controller_pid_init(&pid, &P.pid);
+    controller_t ctrl = controller_pid_handle(&pid);
+    euler_t tgt = { 0.0f, 0.0f, 0.0f };
+    controller_output_t prev = { 0.0f, { 0.0f, 0.0f, 0.0f } }, out;
+    controller_input_t in;
+    mixer_result_t r;
+    attitude_state_t as;
+
+    /* 左側を上げる（基板xは右向き。右が下がると、上向きの加速度が基板の -x 側へ傾く） */
+    physical_tilt(-s20, 0.0f, c20, &as);
+    CHECK(as.angle.roll_rad > 0.3f);                         /* roll+（左上げ） */
+    CHECK(fabsf(as.angle.pitch_rad) < 0.02f);
+    ctrl.ops->reset(ctrl.self);
+    controller_input_make(&as, &tgt, 10.0f, &prev, &in);
+    CHECK(ctrl.ops->step(ctrl.self, &in, 0.001f, &out));
+    CHECK(out.torque_g[0] < 0.0f);                           /* 戻す = 負のロール */
+    mixer_mix(af, &out, 30.0f, &r);
+    CHECK(r.motor_g[2] < r.motor_g[0] && r.motor_g[3] < r.motor_g[1]);   /* 左のM3,M4が下がり、右のM1,M2が上がる */
+
+    /* 機首を下げる（基板yは前向き。前が下がると、上向きの加速度が基板の -y 側へ傾く） */
+    physical_tilt(0.0f, -s20, c20, &as);
+    CHECK(as.angle.pitch_rad > 0.3f);                        /* pitch+（機首下げ） */
+    CHECK(fabsf(as.angle.roll_rad) < 0.02f);
+    ctrl.ops->reset(ctrl.self);
+    controller_input_make(&as, &tgt, 10.0f, &prev, &in);
+    CHECK(ctrl.ops->step(ctrl.self, &in, 0.001f, &out));
+    CHECK(out.torque_g[1] < 0.0f);
+    mixer_mix(af, &out, 30.0f, &r);
+    CHECK(r.motor_g[1] > r.motor_g[0] && r.motor_g[3] > r.motor_g[2]);   /* 前のM2,M4が上がり、後ろのM1,M3が下がる */
+
+    /* ヨー+（上から見て反時計回り）の指令は、時計回りのM1,M4を上げる（反トルクは反時計回り） */
+    controller_output_t yaw = { 10.0f, { 0.0f, 0.0f, 1.0f } };
+    mixer_mix(af, &yaw, 30.0f, &r);
+    CHECK(r.motor_g[0] > r.motor_g[1] && r.motor_g[3] > r.motor_g[2]);
+}
+
 int main(void)
 {
     params_set_defaults(&P);
@@ -625,6 +682,7 @@ int main(void)
         { "mixer: 飽和（ヨー削り→ずらし→縮小）", test_mixer_saturation },
         { "mixer: 乱数入力で範囲と素通し", test_mixer_fuzz },
         { "imu_mount: 軸の並べ替えと不正な設定の拒否", test_imu_mount },
+        { "physical: 傾けると戻す向きのモーターが上がる（確定した配置）", test_physical_signs },
         { "thrust: 推力→デューティの式", test_thrust_model },
         { "chain: 姿勢→PID→ミキサー→デューティ", test_chain },
         { "battery: 偽ADCの生カウント→電圧（分圧比）", test_battery_update_with_divider },

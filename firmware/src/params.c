@@ -47,13 +47,15 @@ void params_set_defaults(params_t *p)
     p->attitude.bias_tau_s         = 1.0f;
 
     /* ---- 機体 ---- */
-    /* TODO: プロペラを付けて回す前に必ず確定。仮: M1=前左 M2=前右 M3=後右 M4=後左、M1とM3がCW。
-     * 列 = {roll, pitch, yaw}。roll>0 は左側の推力を上げる、pitch>0 は前側を上げる。 */
+    /* 確定（設計メモ、2026-11-08 オーナー）。機体の軸: x前・y左・z上（右手系）。
+     * 配置: 右前M2・左前M4・右後ろM1・左後ろM3。上から見て M1とM4（対角）が時計回り、M2とM3が反時計回り。
+     * 列 = {roll, pitch, yaw}。+1 は「そのモーターの推力を上げると、その軸まわりに正のトルク」。
+     * roll>0 は左側を上げる、pitch>0 は後ろ側を上げる（機首下げ）、yaw>0（上から見て反時計回り）は時計回りのモーターを上げる。 */
     static const int8_t sign[FC_NUM_MOTORS][3] = {
-        { +1, +1, +1 },   /* M1 前左 CW  */
-        { -1, +1, -1 },   /* M2 前右 CCW */
-        { -1, -1, +1 },   /* M3 後右 CW  */
-        { +1, -1, -1 },   /* M4 後左 CCW */
+        { -1, +1, +1 },   /* M1 右後ろ CW  */
+        { -1, -1, -1 },   /* M2 右前   CCW */
+        { +1, +1, -1 },   /* M3 左後ろ CCW */
+        { +1, -1, +1 },   /* M4 左前   CW  */
     };
     memcpy(p->airframe.mixer_sign, sign, sizeof(sign));
     p->airframe.thrust_k_g_per_vduty   = 9.4f;   /* HW実測 */
@@ -91,8 +93,9 @@ void params_set_defaults(params_t *p)
     /* 方策の正規化: 恒等（学習側と決めるまで）、IMU取り付け: 軸そのまま */
     for (int i = 0; i < FC_CONTROLLER_INPUT_DIM; i++) { p->policy_norm.in_scale[i] = 1.0f; }
     for (int i = 0; i < FC_CONTROLLER_OUTPUT_DIM; i++) { p->policy_norm.out_scale[i] = 1.0f; }
-    /* TODO: 設計メモで確定するまで仮（恒等）。値はオーナーが導いて設計メモに書く */
-    p->imu_mount.axis_map[0] = 1; p->imu_mount.axis_map[1] = 2; p->imu_mount.axis_map[2] = 3;
+    /* 確定（設計メモ、2026-11-08 オーナー）。IMU基板: x右・y前・z上 → 機体: x前・y左・z上。
+     * 機体x = +基板y、機体y = -基板x、機体z = +基板z */
+    p->imu_mount.axis_map[0] = 2; p->imu_mount.axis_map[1] = -1; p->imu_mount.axis_map[2] = 3;
 }
 
 static bool gains_ok(const pid_gains_t *g)
