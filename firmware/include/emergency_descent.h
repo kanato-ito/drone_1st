@@ -16,7 +16,7 @@
 #include "attitude.h"
 
 typedef struct {
-    float    hover_thrust_est_n; /**< 飛行中のスロットルのゆっくりした平均 */
+    float    hover_thrust_est_g; /**< 飛行中のスロットルのゆっくりした平均 */
     uint64_t start_us;
     bool     shock_seen;
     uint64_t quiet_since_us;
@@ -24,7 +24,7 @@ typedef struct {
 
 typedef struct {
     euler_t target_attitude;  /**< 提案: ロール/ピッチ0、ヨーは降下開始時の値 */
-    float   target_thrust_n;
+    float   target_thrust_g;
     bool    landed;
     bool    timed_out;
 } descent_target_t;
@@ -32,7 +32,7 @@ typedef struct {
 void descent_init(descent_t *d);
 
 /** 飛行中の推力指令を取り込んで「直前のホバリング推力」を更新。コア0、FLIGHT中に毎周期。 */
-void descent_track_hover(descent_t *d, float thrust_cmd_n);
+void descent_track_hover(descent_t *d, float thrust_cmd_g);
 
 /** 降下開始。コア0、FS_EMERGENCY_DESCENT に入った周期に1回。 */
 void descent_begin(descent_t *d, const attitude_state_t *att, uint64_t now_us);

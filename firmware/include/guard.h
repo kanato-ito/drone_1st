@@ -47,6 +47,6 @@ bool guard_check_pre(guard_t *g, const guard_params_t *gp, const attitude_state_
  * 取り上げが決まれば true（この周期の出力は影PIDの値に差し替える）。
  */
 bool guard_check_post(guard_t *g, const guard_params_t *gp, const controller_output_t *policy_out,
-                      float thrust_max_n, float torque_max_nm, uint32_t elapsed_us);
+                      float thrust_max_g, float torque_max_g, uint32_t elapsed_us);
 
 #endif /* GUARD_H */

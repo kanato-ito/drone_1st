@@ -14,37 +14,60 @@
 #include <stdbool.h>
 #include "fc_types.h"
 
-#define PARAM_THRUST_CURVE_POINTS 8
-
-/** PIDの1軸ぶんのゲイン。 */
+/** PIDの1軸ぶんのゲイン。単位は軸ごとに異なる（controller_pid.h 参照）。 */
 typedef struct {
     float kp, ki, kd;
-    float i_limit;   /**< 積分の上限 */
+    float i_limit;   /**< I項の出力への寄与の上限（絶対値）。初期値は out_limit の1〜2割（rev22） */
     float out_limit; /**< 出力の上限 */
     float d_lpf_hz;  /**< 微分のローパス */
 } pid_gains_t;
 
-/** PID（提案: 姿勢角→角速度のカスケード）。添字0,1,2 = roll,pitch,yaw。 */
+/**
+ * 2段PID（rev22）。添字0,1,2 = roll,pitch,yaw。
+ * 外側 angle: 角度の誤差[rad] → 目標角速度[rad/s]。内側 rate: 角速度の誤差[rad/s] → 指令[g]。
+ * 調整は内側から。内側を外側よりはっきり速くする。
+ */
 typedef struct {
     pid_gains_t angle[3];
     pid_gains_t rate[3];
+    float i_enable_thrust_g; /**< 目標推力がこれを超えている間だけ積分をためる [g]（rev22）。仮 */
 } pid_params_t;
 
-/** 機体の配置・推力特性（ミキサー用）。 */
+/**
+ * 相補フィルタ・ジャイロのバイアス推定・静止判定（rev22）。すべて仮。
+ * 静止判定 = 「ジャイロの平均からのばらつき <= still_gyro_std_rps」かつ
+ *            「| |加速度| - 1g | <= still_accel_tol_g」が still_hold_ms 続く。
+ */
 typedef struct {
-    float   motor_x_m[FC_NUM_MOTORS];     /**< 重心からの位置 [m]（前方+）。座標系は未決 */
-    float   motor_y_m[FC_NUM_MOTORS];     /**< 同（右+） */
-    int8_t  spin_dir[FC_NUM_MOTORS];      /**< 回転方向 +1/-1（反トルクの符号） */
-    float   yaw_torque_per_thrust_m;      /**< 推力1Nあたりの反トルク [N·m/N] */
-    float   duty_points[PARAM_THRUST_CURVE_POINTS];   /**< 推力特性: デューティ(0..1) */
-    float   thrust_points_n[PARAM_THRUST_CURVE_POINTS]; /**< 同、1モーターの推力 [N]（折れ線。形は測定後に見直す） */
-    float   thrust_ref_voltage_v;         /**< 上の特性を測った電圧 */
-    float   max_total_thrust_n;           /**< throttle=1 のときの合計推力 [N]（スロットル→推力の換算） */
+    float    tau_s;              /**< 相補フィルタの時定数τ [s]。実機で調整。仮 */
+    float    still_gyro_std_rps; /**< 静止とみなすジャイロのばらつき（標準偏差） [rad/s] */
+    float    still_gyro_abs_max_rps; /**< 提案: 窓平均の大きさがこれ以上なら静止にしない [rad/s]。一定の速さで回り続けても「ばらつき」は0になるため、その誤判定を防ぐ */
+    float    still_accel_tol_g;  /**< 静止とみなす |加速度| の1gからのずれ [g] */
+    uint32_t still_hold_ms;      /**< 静止がこの時間続いたら「静止と確定」 */
+    float    still_window_s;     /**< 平均・ばらつきを見る窓の時定数 [s] */
+    float    bias_tau_s;         /**< バイアス平均の時定数 [s]（確定中だけ更新） */
+} attitude_params_t;
+
+/**
+ * 機体の配置（ミキサー用）と推力特性。単位はすべて g（1モーターあたりの推力）。
+ * 各モーターの推力 = 全体推力 + sign[roll]*ロール指令 + sign[pitch]*ピッチ指令 + sign[yaw]*ヨー指令。
+ */
+typedef struct {
+    /**
+     * ★★★ TODO: プロペラを付けて回す前に必ず確定 ★★★
+     * 行 = M1..M4、列 = roll,pitch,yaw の符号(+1/-1)。モーターの位置・回転方向が未決なので
+     * 今は仮の値（M1=前左 M2=前右 M3=後右 M4=後左、M1とM3がCW）。実機で1つずつ確かめること。
+     */
+    int8_t  mixer_sign[FC_NUM_MOTORS][3];
+    float   thrust_k_g_per_vduty;   /**< 推力[g] ≒ K × デューティ × 電圧[V]。HW実測 9.4（3.5〜4.2Vで直線） */
+    float   voltage_min_calc_v;     /**< 換算に使う電圧の下限 [V]。ADC未接続・異常値で割り算が暴れないように（提案） */
+    float   throttle_full_thrust_g; /**< スロットル1.0のときの1モーター推力 [g]（スロットル→推力の換算。提案） */
 } airframe_params_t;
 
 /** 電池。電圧範囲を含む。 */
 typedef struct {
-    float adc_divider_ratio; /**< 分圧比（電池電圧 = ADC電圧 × この値）。TODO: 回路図確認 */
+    float adc_divider_ratio; /**< 分圧比（電池電圧 = ADC電圧 × この値）。仮置き。TODO: HW設計書で確認 */
+    float lpf_tau_s;         /**< 電圧のローパス時定数 [s]（ゆっくり。モーター負荷で電圧が揺れるため） */
     float adc_vref_v;        /**< ADC基準 [V] */
     float v_max;             /**< 満充電付近 [V]（電圧範囲の上端） */
     float v_min;             /**< 使用下限 [V]（電圧範囲の下端） */
@@ -98,6 +121,7 @@ typedef struct {
 typedef struct {
     uint32_t             version;
     pid_params_t         pid;
+    attitude_params_t    attitude;
     airframe_params_t    airframe;
     battery_params_t     battery;
     safety_params_t      safety;
