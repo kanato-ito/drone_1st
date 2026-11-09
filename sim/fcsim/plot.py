@@ -81,9 +81,10 @@ def _setup_font() -> None:
     from matplotlib import font_manager
 
     for name in ("Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP", "IPAexGothic",
-                 "Yu Gothic", "Meiryo", "TakaoGothic"):
+                 "Yu Gothic", "Meiryo", "TakaoGothic", "WenQuanYi Zen Hei"):
         if any(f.name == name for f in font_manager.fontManager.ttflist):
             matplotlib.rcParams["font.family"] = name
+            matplotlib.rcParams["axes.unicode_minus"] = False   # 日本語フォントに無い「−」を使わない
             return
     # 日本語フォントが無い環境（クラウドなど）: 文字は□になるが、グラフの線は正しい。警告だけ止める
     import warnings
