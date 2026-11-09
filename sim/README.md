@@ -8,7 +8,7 @@
 
 | 部分 | 書く人 | 場所 |
 | --- | --- | --- |
-| 機体モデル（力の式・剛体の回転と並進・床・IMUのノイズ・電池の内部抵抗） | kanato | 新しいファイル（例 `fcsim/drone.py`）。形は `fcsim/model.py` の `DroneModel` |
+| 機体モデル（力の式・剛体の回転と並進・床・IMUのノイズ・電池の内部抵抗） | 当初 kanato → 2026-11-09 kanato の依頼で Claude | `fcsim/drone.py`。形は `fcsim/model.py` の `DroneModel` |
 | ポートの偽物、1周期の呼び出し、ctypes、時間の進め方、グラフ、試験 | Claude | `c/`、`fcsim/fc.py` `runner.py` `plot.py`、`tests/` |
 | MuJoCo版（離陸・着地） | あとで | — |
 
@@ -26,6 +26,8 @@ cmake --build sim/build
 cd sim
 python -m pytest -q tests
 python -m fcsim.scenarios.bench_tilt      # グラフが sim/out/bench_tilt.png にできる
+python -m fcsim.scenarios.flight          # 機体モデルで最初の4つの試験。sim/out/flight_*.png（1分弱）
+python -m fcsim.scenarios.flight hover    # 1つだけ（hover / disturbance / windup / resistance）
 ```
 
 Mac では `sim/build/libfcsim.dylib`、Linux では `libfcsim.so` ができる。別の場所のものを使うときは環境変数 `FCSIM_LIB`。
@@ -65,9 +67,35 @@ Mac では `sim/build/libfcsim.dylib`、Linux では `libfcsim.so` ができる�
 | `battery_voltage()` | 端子電圧 [V]（内部抵抗の電圧降下を含む） |
 | `log()` | グラフに出したい本当の値（`true_angle_rad` を返すと姿勢のグラフに点線で重なる） |
 
-`BenchModel` は物理なしの試験台（姿勢を外から決めるだけ）。つなぎ込みの確認用で、機体モデルができたら差し替える。
+`BenchModel` は物理なしの試験台（姿勢を外から決めるだけ）。つなぎ込みの確認用。
 
-## 試験（`tests/test_glue.py`）
+## 機体モデル（`fcsim/drone.py`）
+
+1刻みごとに 1→2→3・4 の順に進める。値の出典と「見積もり／仮」の区別は `DroneParams` の各行に書いた。
+
+| 部品 | 式 | 主な値 |
+| --- | --- | --- |
+| 1. モーター | 定常推力 T = 9.4 × duty × V [g]（HW設計書7章）へ一次遅れ τ=70ms。反トルク = spin × k_q × T[N]、電流 = k_i × T[g] | k_q=0.005m（見積もり 0.003〜0.02）、k_i=0.089A/g（実測4点） |
+| 2. 電池 | 端子電圧 = 開放電圧 − 内部抵抗 × 合計電流。モーターは前の刻みの電圧で回す | 内部抵抗は未測定（試験で 0〜0.15Ω を振る） |
+| 3. 回転 | I ω̇ = τ − ω × Iω（機体座標）、姿勢はクォータニオンで q ⊗ exp(ωdt/2) | I = (5.5, 5.5, 10)×10⁻⁵ kg·m²（見積もり）、モーターは中心から前後左右 42.43mm（基板外形） |
+| 4. 並進と床 | m a = R F + 外乱 − c v + m g。床（z=0）の上では上向きの力が重さを超えるまで動かない。着地は高さ0で止まるだけ | 50g、c=0.01 N/(m/s)（見積もり） |
+| 5. IMU | 角速度 + バイアス + 雑音、比力 = Rᵀ(a − g)/g₀ + 雑音 | 雑音 0.22dps・6mg（1サンプル）、z バイアス +0.44dps（HW設計書7章） |
+
+傾いたまま着地する・はねる・すべるといった接触は扱わない（MuJoCo版で見る）。
+
+## 最初の4つの試験（`fcsim/scenarios/flight.py`、`tests/test_flight.py`）
+
+ファームには高さの制御が無いので、`AltitudePilot`（操縦者の代わり）が本当の高さを見て目標推力を決める。
+
+1. **hover**: アーム → 2.5秒で離陸 → 0.5mでホバリング。
+2. **disturbance**: ロール・ピッチ・ヨーに +1mN·m・30ms のパルス、11〜15秒にロールへ一定の 0.2mN·m。
+3. **windup**: ロール+5°の床で、8g（積分がたまる）と 2g（i_enable_thrust_g より下）で待ってから離陸。
+4. **resistance**: 内部抵抗 0〜0.15Ω で、ホバリング → 6秒で 1.0m へ上昇。
+
+試験は「いまのファームと仮のゲインでこう振る舞う」という事実を確かめる。わかっている問題は
+`xfail(strict=True)` にしてあり、直ったら試験が知らせる（外して通常の試験にする）。
+
+## つなぎ込みの試験（`tests/test_glue.py`）
 
 つなぎ込みが正しいことだけを見る（物理は見ない）: 刻みがファームと同じ、1周期でFIFOを全部読む、
 静止1秒・水平でアーム、傾けたら推定が追従し戻す向きの指令がミキサーの符号表どおりに配られる、

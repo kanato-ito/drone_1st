@@ -16,7 +16,9 @@ MOTORS = ("M1", "M2", "M3", "M4")
 
 def plot_log(log, path: str | Path, title: str = "") -> Path:
     t = log["t"]
-    fig, ax = plt.subplots(5, 1, figsize=(11, 13), sharex=True)
+    has_pos = "model_pos_m" in log
+    n = 6 if has_pos else 5
+    fig, ax = plt.subplots(n, 1, figsize=(11, 2.6 * n), sharex=True)
 
     # 1. 姿勢（推定と目標、機体モデルが本当の値を出していればそれも）
     for i, name in enumerate(AXES):
@@ -51,7 +53,12 @@ def plot_log(log, path: str | Path, title: str = "") -> Path:
     ax[4].plot(t, log["batt_v"], label="ファームのローパス後")
     ax[4].set_ylabel("電池 [V]")
     ax[4].ticklabel_format(axis="y", useOffset=False)
-    ax[4].set_xlabel("時間 [s]")
+    if has_pos:
+        # 6. 位置（機体モデルの本当の値。ファームは位置を知らない）
+        for i, name in enumerate(("x", "y", "z（高さ）")):
+            ax[5].plot(t, log["model_pos_m"][:, i], label=name)
+        ax[5].set_ylabel("位置 [m]")
+    ax[-1].set_xlabel("時間 [s]")
 
     armed = log["armed"] > 0.5
     for a in ax:
