@@ -58,6 +58,7 @@ void control_loop_init(control_loop_t *c, const params_t *params)
     c->boot_imu_ok = (imu_init(&cfg) == IMU_OK);
     c->wdt_reboot = fc_wdt_caused_reboot();
     c->dt_sample = imu_sample_period_s();
+    c->fifo_wtm_words = cfg.fifo_watermark_words;
 
     attitude_init(&c->att, &params->attitude);
     controller_pid_init(&c->pid, &params->pid);
@@ -186,6 +187,17 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev)
         if (imu_read_fifo(&c->batch) == IMU_OK) {
             read_ok = true;
             c->imu_fail_count = 0;
+            /* 提案: FIFOをウォーターマーク未満まで読み切ったのにピンがHighのまま = INT1の張り付き。
+             * 本物のFIFO_TH線はこの時点でLowのはず。取りこぼし（words_read >= WTM）は数えない */
+            if (imu_int1_pin_is_high() && c->batch.words_read < c->fifo_wtm_words) {
+                if (c->int1_stuck_count < UINT32_MAX) c->int1_stuck_count++;
+                if (c->int1_stuck_count >= FC_LOOP_INT1_STUCK_LIMIT && !c->int1_stuck) {
+                    c->int1_stuck = true;   /* 再起動までラッチ */
+                    c->stats.int1_stuck++;
+                }
+            } else {
+                c->int1_stuck_count = 0;
+            }
             if (c->batch.fifo_overrun) c->stats.overruns++;
             if (c->batch.truncated) c->stats.truncs++;
             imu_mount_apply(&p->imu_mount, &c->batch);   /* 基板の軸 → 機体の軸 */
@@ -199,7 +211,15 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev)
     }
     const attitude_state_t *as = attitude_get(&c->att);
     const float tilt = as->valid ? attitude_tilt_rad(as) : 0.0f;
-    const float ctrl_dt = c->dt_sample * (float)(c->batch.count ? c->batch.count : 8u);
+    /* 提案: サンプルが0個の周期は制御を進めない（古いデータでdt 8個ぶん進めない） */
+    const bool have_samples = read_ok && c->batch.count > 0u;
+    const float ctrl_dt = have_samples ? c->dt_sample * (float)c->batch.count : 0.0f;
+    if (!have_samples && ev != NULL) {
+        c->stats.no_sample++;
+        if (c->no_sample_count < UINT32_MAX) c->no_sample_count++;
+    } else if (have_samples) {
+        c->no_sample_count = 0;
+    }
 
     /* ---- 電池（数周期に1回） ---- */
     if ((c->timing.cycle_index % FC_LOOP_BATT_EVERY_N) == 0u) {
@@ -251,7 +271,9 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev)
     memset(&in, 0, sizeof(in));
     in.boot_imu_ok = c->boot_imu_ok;
     in.wdt_reboot = c->wdt_reboot;
-    in.imu_timeout = (ev == NULL) || (c->imu_fail_count >= FC_LOOP_IMU_FAIL_LIMIT);
+    /* 提案: INT1張り付きの専用の理由は作らず IMU途絶 に含める */
+    in.imu_timeout = (ev == NULL) || (c->imu_fail_count >= FC_LOOP_IMU_FAIL_LIMIT) || c->int1_stuck ||
+                     (c->no_sample_count >= FC_LOOP_NO_SAMPLE_LIMIT);
     in.comm_connected = comm_connected;
     in.comm_lost = comm_lost;
     in.arm_rising_edge = arm_edge;
@@ -283,8 +305,6 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev)
     }
 
     /* ---- 制御器 ---- */
-    c->policy_used = false;
-    c->policy_us = 0;
     c->mix.saturated = false;
     for (int i = 0; i < FC_NUM_MOTORS; i++) c->duty[i] = 0.0f;
     /* 提案: 飛行中でもスロットルが idle_throttle 以下なら回さない（状態は飛行のまま）。
@@ -292,6 +312,11 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev)
     const bool idle = (st == FS_FLIGHT) &&
                       (finite_or_zero(c->target.throttle) <= p->safety.idle_throttle);
     const bool flying = flight_fsm_motors_allowed(st) && !idle;
+    /* 提案: サンプルが0個の周期は制御を進めず前回の指令を保つ（PID・方策・見張り役・hover追従は呼ばない）。
+     * policy_used は前周期の値のまま、policy_us は0 */
+    const bool hold = flying && !have_samples;
+    c->policy_us = 0;
+    if (!hold) c->policy_used = false;
 
     if (flying) {
         if (st == FS_FLIGHT) {
@@ -301,45 +326,47 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev)
             c->target_thrust_g = c->desc_tgt.target_thrust_g;
         }
 
-        controller_input_t cin;
-        controller_input_make(as, &c->target_att, c->target_thrust_g, &c->prev_output, &cin);
+        if (!hold) {
+            controller_input_t cin;
+            controller_input_make(as, &c->target_att, c->target_thrust_g, &c->prev_output, &cin);
 
-        /* PIDは毎周期回す: 降下中は本番、方策使用中は影（取り上げ時の積分が冷えない。architecture.md #13） */
-        controller_output_t pid_out;
-        if (!c->pid_ctrl.ops->step(c->pid_ctrl.self, &cin, ctrl_dt, &pid_out)) pid_out = zero_output();
-        c->pid_shadow_out = pid_out;
-        c->out = pid_out;
+            /* PIDは毎周期回す: 降下中は本番、方策使用中は影（取り上げ時の積分が冷えない。architecture.md #13） */
+            controller_output_t pid_out;
+            if (!c->pid_ctrl.ops->step(c->pid_ctrl.self, &cin, ctrl_dt, &pid_out)) pid_out = zero_output();
+            c->pid_shadow_out = pid_out;
+            c->out = pid_out;
 
-        if (st == FS_FLIGHT && c->active_controller == CONTROLLER_POLICY && policy_available(c)) {
-            bool take = guard_taken_over(&c->guard) ||
-                        guard_check_pre(&c->guard, &p->guard, as, human_takeover);
-            if (!take) {
-                controller_output_t pol_out = zero_output();
-                const uint32_t t0 = fc_clock_now_us32();
-                const bool ok = c->policy_ctrl.ops->step(c->policy_ctrl.self, &cin, ctrl_dt, &pol_out);
-                const uint32_t el = (uint32_t)(fc_clock_now_us32() - t0);
-                c->policy_us = (uint16_t)(el > 65535u ? 65535u : el);
-                if (!ok) {
-                    guard_force_takeover(&c->guard, TAKEOVER_POLICY_FAIL);
-                    take = true;
-                } else {
-                    /* 張りつきの判定: 推力は今の電池での最大、トルクはPIDの内側の出力上限（提案） */
-                    float tq_max = 0.0f;
-                    for (int i = 0; i < 3; i++) {
-                        if (p->pid.rate[i].out_limit > tq_max) tq_max = p->pid.rate[i].out_limit;
-                    }
-                    take = guard_check_post(&c->guard, &p->guard, &pol_out,
-                                            thrust_model_max_g(&p->airframe, c->batt_v_used), tq_max, el);
-                    if (!take) {
-                        c->out = pol_out;   /* 取り上げでなければ方策の出力を使う */
-                        c->policy_used = true;
+            if (st == FS_FLIGHT && c->active_controller == CONTROLLER_POLICY && policy_available(c)) {
+                bool take = guard_taken_over(&c->guard) ||
+                            guard_check_pre(&c->guard, &p->guard, as, human_takeover);
+                if (!take) {
+                    controller_output_t pol_out = zero_output();
+                    const uint32_t t0 = fc_clock_now_us32();
+                    const bool ok = c->policy_ctrl.ops->step(c->policy_ctrl.self, &cin, ctrl_dt, &pol_out);
+                    const uint32_t el = (uint32_t)(fc_clock_now_us32() - t0);
+                    c->policy_us = (uint16_t)(el > 65535u ? 65535u : el);
+                    if (!ok) {
+                        guard_force_takeover(&c->guard, TAKEOVER_POLICY_FAIL);
+                        take = true;
+                    } else {
+                        /* 張りつきの判定: 推力は今の電池での最大、トルクはPIDの内側の出力上限（提案） */
+                        float tq_max = 0.0f;
+                        for (int i = 0; i < 3; i++) {
+                            if (p->pid.rate[i].out_limit > tq_max) tq_max = p->pid.rate[i].out_limit;
+                        }
+                        take = guard_check_post(&c->guard, &p->guard, &pol_out,
+                                                thrust_model_max_g(&p->airframe, c->batt_v_used), tq_max, el);
+                        if (!take) {
+                            c->out = pol_out;   /* 取り上げでなければ方策の出力を使う */
+                            c->policy_used = true;
+                        }
                     }
                 }
+                /* take のときは c->out は影PIDの出力のまま（この周期から差し替え） */
             }
-            /* take のときは c->out は影PIDの出力のまま（この周期から差し替え） */
-        }
-        c->prev_output = c->out;   /* 前回出力は実際に指令した値 */
-        if (st == FS_FLIGHT) descent_track_hover(&c->descent, c->out.thrust_g);
+            c->prev_output = c->out;   /* 前回出力は実際に指令した値 */
+            if (st == FS_FLIGHT) descent_track_hover(&c->descent, c->out.thrust_g);
+        }   /* !hold。hold のときは c->out（= prev_output）をそのままミキサーへ */
 
         const float vmax = thrust_model_max_g(&p->airframe, c->batt_v_used);
         mixer_mix(&p->airframe, &c->out, vmax, &c->mix);
@@ -380,7 +407,8 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev)
 
     /* ---- INT1の取りこぼし確認（architecture.md #10/#12） ---- */
     /* 読み出しに失敗した周期は急いで読み直さない（失敗を高速で繰り返さず、待ちで時間基準を保つ） */
-    c->int1_pending = (ev != NULL) && read_ok && imu_int1_pin_is_high();
+    /* INT1張り付きがラッチされたら読み直さない（空読みのビジー回りを止める） */
+    c->int1_pending = (ev != NULL) && read_ok && !c->int1_stuck && imu_int1_pin_is_high();
     if (c->int1_pending) c->stats.miss++;
     return c->int1_pending;
 }
@@ -399,7 +427,9 @@ void control_loop_step(control_loop_t *c)
         got = imu_wait_int1(FC_INT1_TIMEOUT_US, &ev);
         if (!got) {
             c->stats.timeouts++;
-            if (imu_int1_pin_is_high()) {
+            /* 提案: 張り付きラッチ後は救出しない（空読みになるだけ）。run_once(NULL) で5ms待ちを時間基準にする。
+             * 待ちが立ち上がりを返したときは通常どおり run_once(&ev) を呼ぶ（ラッチが imu_timeout を保つ） */
+            if (!c->int1_stuck && imu_int1_pin_is_high()) {
                 /* ピンはHighのまま = 立ち上がりを取りこぼした。読んで救出する（INT1自体は生きている） */
                 c->stats.rescues++;
                 got = true;

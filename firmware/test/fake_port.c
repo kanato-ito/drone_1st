@@ -64,6 +64,7 @@ vec3f_t fake_imu_gyro, fake_imu_accel;
 bool     fake_imu_wait_timeout, fake_imu_pin_high;
 uint32_t fake_imu_period_us, fake_imu_read_cost_us, fake_imu_int1_count;
 int      fake_imu_wait_calls, fake_imu_read_calls;
+int      fake_imu_read_samples;
 
 imu_config_t imu_config_default(void)
 {
@@ -94,11 +95,11 @@ imu_status_t imu_read_fifo(imu_batch_t *out)
     fake_imu_read_calls++;
     fake_now_us += fake_imu_read_cost_us;
     if (fake_imu_read_result != IMU_OK) return fake_imu_read_result;
-    out->count = 8;
-    out->words_read = 16;
+    out->count = (uint8_t)fake_imu_read_samples;
+    out->words_read = (uint16_t)(2 * fake_imu_read_samples);
     out->fifo_overrun = false;
     out->truncated = false;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < fake_imu_read_samples; i++) {
         out->samples[i].gyro_rps = fake_imu_gyro;
         out->samples[i].accel_g = fake_imu_accel;
     }
@@ -123,6 +124,7 @@ void fake_port_reset(void)
     fake_imu_read_cost_us = 160;
     fake_imu_int1_count = 0;
     fake_imu_wait_calls = fake_imu_read_calls = 0;
+    fake_imu_read_samples = 8;
 }
 
 /* 機体 = (基板y, -基板x, 基板z) なので、基板 = (-機体y, 機体x, 機体z) */

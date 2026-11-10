@@ -132,6 +132,8 @@ architecture.md 3章の順序のうち、**IMU読み出しを最初にした**�
 | 11 | `ESTOP_INTERNAL_ERROR`（不正な状態値の安全側の行き先） |
 | 12 | `params_validate` に安全系の検査を追加（WDT≥20ms、傾き30°<60° など） |
 | 13 | 飛行中でもスロットルが `idle_throttle`（0.05）以下ならモーターを止める（状態は飛行のまま）。地上でアームしたまま傾いていると、P項だけでモーターが回るのを防ぐ。降下中は対象外（Opusレビューで追加） |
+| 14 | サンプルが0個（または読み出し失敗）の飛行中・降下中の周期は、PID・方策・見張り役を進めず前回の指令を保つ（古いデータでdt 8個ぶん進めない）。保つのは連続 `FC_LOOP_NO_SAMPLE_LIMIT`（16）周期までで、それを超えたら IMU途絶（`imu_timeout`）として ESTOP。統計 `no_sample` |
+| 15 | 読み切って（`words_read` < ウォーターマーク）もINT1がHighの周期が連続 `FC_LOOP_INT1_STUCK_LIMIT`（8）回で「INT1張り付き」をラッチ（再起動まで）。専用の理由は作らず IMU途絶（`imu_timeout`）として ESTOP。ラッチ後は読み直し・救出の読み出しをしない（ビジー回り防止）。統計 `int1_stuck` |
 
 ## 6. 設計メモであいまいだった点（どう読んだか）
 
@@ -183,7 +185,7 @@ make -C build            # build/loop_bench.uf2
 電池をつないでいない（ADC 2V未満）と起動時に「電池なし」モードになり、電池低下で降下に入らない（3.8V固定で換算）。電池をつないだ試験では通常どおり判定する。
 
 コマンド（1文字）: `c` 接続 / `s` 送信停止 / `a` アーム押す⇄離す / `d` ディスアーム / `e` 非常停止 / `+` `-` スロットル±0.05 / `0` スロットル0 / `t` 取り上げ旗 / `w` WDT試験 / `h` ヘルプ。
-表示は1秒に1行: 状態、estop理由、降下理由、guard、制御器、姿勢、スロットル、推力、デューティ、`proc_us avg/max`、`over`（1064µs超の回数）、`TMO`（INT1待ちタイムアウト）、`RESC`（救出）、`MISS`（取りこぼし）、`ERR`（読み出し失敗）、`WDT_fed`（餌やり回数）、PC役の状態。
+表示は1秒に1行: 状態、estop理由、降下理由、guard、制御器、姿勢、スロットル、推力、デューティ、`proc_us avg/max`、`over`（1064µs超の回数）、`TMO`（INT1待ちタイムアウト）、`RESC`（救出）、`MISS`（取りこぼし）、`ERR`（読み出し失敗）、`STUCK`（INT1張り付きのラッチ回数）、`NOSMP`（サンプル0個で制御を保った周期数）、`WDT_fed`（餌やり回数）、PC役の状態。
 
 手順と合格条件:
 
@@ -202,7 +204,7 @@ make -C build            # build/loop_bench.uf2
 | 11 | 電源を入れ直し、`STANDBY` で `e`、`WAIT_COMM`（`c` 前）で `e` | どちらも `ESTOP estop=operator` |
 | 12 | `FLIGHT` でボードを60°超に傾ける | `ESTOP estop=tilt_exceeded` |
 | 13 | `FLIGHT` で `t` | `guard=` は変わらない（方策がなく見張り役が働かない）。方策が入ったら `guard=human` になる |
-| 14 | 全項目を通して `proc_us avg/max` | max が 1064µs に余裕をもって収まる（目安: 最大800µs以下、平均はその半分以下）。`over=0` `ERR=0`。`TMO=0`（IMU途絶の試験をしない限り）。`MISS` `RESC` は数を記録 |
+| 14 | 全項目を通して `proc_us avg/max` | max が 1064µs に余裕をもって収まる（目安: 最大800µs以下、平均はその半分以下）。`over=0` `ERR=0` `STUCK=0` `NOSMP=0`（正常なら0。`STUCK=1` は INT1 が張り付いた印で `ESTOP estop=imu_timeout` になる）。`TMO=0`（IMU途絶の試験をしない限り）。`MISS` `RESC` は数を記録 |
 | 15 | WDT試験: `STANDBY` で `w` | 約100ms後に再起動。再接続後の `init:` 行が `state=ESTOP estop=wdt_reboot wdt_reboot=1`。`c` `a` を押しても `ESTOP` のまま。電源入れ直しで `WAIT_COMM` に戻る |
 | 16 | IMU途絶（任意）: 通電中にIMUのINT1線を外す、または電源を落とす | `ESTOP estop=imu_timeout`、`duty` 0、行は約5msごとの時間基準で出続け `WDT_fed` が増える（再起動しない） |
 

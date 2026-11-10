@@ -35,6 +35,7 @@ extern uint32_t fake_imu_read_cost_us; /**< imu_read_fifo が進める時間（p
 extern uint32_t fake_imu_int1_count;
 extern int      fake_imu_wait_calls;
 extern int      fake_imu_read_calls;
+extern int      fake_imu_read_samples; /**< imu_read_fifo が返すサンプル数（既定8、0〜16）。words_read は 2倍 */
 
 /** 偽物の状態を全部初期値に戻す（各試験の最初に呼ぶ）。時刻は 1,000,000µs から始める。 */
 void fake_port_reset(void);

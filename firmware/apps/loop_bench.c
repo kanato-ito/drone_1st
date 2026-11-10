@@ -187,7 +187,7 @@ int main(void)
             fc_wdt_feed();   /* 試験アプリだけの保険: USBの詰まりで printf が長引いてもリセットさせない */
             printf("[%4us] %-9s estop=%s desc=%s guard=%s ctrl=%s att[deg] r=%+6.2f p=%+6.2f y=%+7.2f"
                    " thr=%.2f T=%.1fg duty=(%.3f %.3f %.3f %.3f)%s"
-                   " proc_us avg/max=%u/%u over=%u TMO=%u RESC=%u MISS=%u ERR=%u WDT_fed=%u"
+                   " proc_us avg/max=%u/%u over=%u TMO=%u RESC=%u MISS=%u ERR=%u STUCK=%u NOSMP=%u WDT_fed=%u"
                    " pc[conn=%d arm=%d pkts=%u] PWM=%s\n",
                    (unsigned)sec, flight_state_name(L.fsm.state), estop_reason_name(L.fsm.estop_reason),
                    descent_reason_name(L.fsm.descent_reason), takeover_reason_name(L.guard.reason),
@@ -199,7 +199,8 @@ int main(void)
                    L.mix.saturated ? "(sat)" : "",
                    (unsigned)avg, (unsigned)proc_max, (unsigned)s->over_budget,
                    (unsigned)s->timeouts, (unsigned)s->rescues, (unsigned)s->miss,
-                   (unsigned)s->read_errors, (unsigned)s->wdt_feeds,
+                   (unsigned)s->read_errors, (unsigned)s->int1_stuck, (unsigned)s->no_sample,
+                   (unsigned)s->wdt_feeds,
                    pc.connected ? 1 : 0, pc.arm ? 1 : 0, (unsigned)pc.sent, PWM_ENABLED ? "ON" : "OFF");
             fc_wdt_feed();
             proc_sum = 0; proc_max = 0; proc_n = 0;

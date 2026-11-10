@@ -31,6 +31,17 @@
 #define FC_LOOP_BATT_EVERY_N 8u
 /** IMUの読み出しが連続でこれだけ失敗したらIMU途絶（提案。1周期≒1ms なので約3ms）。 */
 #define FC_LOOP_IMU_FAIL_LIMIT 3u
+/**
+ * 提案: 読み切ったのにピンがHighのままの周期がこれだけ連続したら INT1 張り付きとして IMU途絶 にする。
+ * 空読みの回転では1ms未満で到達し、本物の取りこぼし（words_read >= WTM）では起きない。
+ */
+#define FC_LOOP_INT1_STUCK_LIMIT 8u
+/**
+ * 提案: サンプル0個（読み出し失敗を含む）の周期がこれだけ連続したら IMU途絶 にする。
+ * 前回の指令を保つ時間に上限を設ける（通常の周期で約17ms）。張り付き以外の原因で
+ * データが来ないまま古い指令を出し続けないため。
+ */
+#define FC_LOOP_NO_SAMPLE_LIMIT 16u
 /** 電池なし試験モード(bench_no_battery)で換算に使う電圧 [V]。 */
 #define FC_LOOP_BENCH_BATT_V 3.8f
 
@@ -45,6 +56,8 @@ typedef struct {
     uint32_t truncs;       /**< 1回で読み切れなかった回数 */
     uint32_t over_budget;  /**< proc_us が 1064µs を超えた回数 */
     uint32_t wdt_feeds;    /**< fc_wdt_feed を呼んだ回数 */
+    uint32_t int1_stuck;   /**< INT1張り付きをラッチした回数（0か1） */
+    uint32_t no_sample;    /**< 読めたがサンプル0個（または読み出し失敗）で制御を進めなかった周期（ev あり） */
 } control_loop_stats_t;
 
 /** コア0の全状態。静的に1つだけ確保する（mallocなし）。 */
@@ -79,6 +92,10 @@ typedef struct {
     bool  wdt_reboot;                    /**< 起動時にWDT起因と判った */
     float dt_sample;                     /**< サンプル間隔 [s] */
     bool  int1_pending;                  /**< 読み終えてもINT1がHigh: 次は待たずに読む */
+    uint32_t fifo_wtm_words;             /**< FIFOウォーターマーク [ワード]（init で imu_config から） */
+    uint32_t int1_stuck_count;           /**< 読み切ったのにピンがHighの連続周期数 */
+    uint32_t no_sample_count;            /**< サンプル0個（読み出し失敗を含む）の連続周期数 */
+    bool  int1_stuck;                    /**< INT1張り付きをラッチ（再起動まで。IMU途絶として非常停止、読み直しもしない） */
     bool  imu_stalled;                   /**< 今周期はIMUのデータなし（INT1が来ずピンもLow） */
     descent_target_t desc_tgt;           /**< 降下の目標（降下中のみ有効） */
     euler_t target_att;                  /**< 今周期の目標姿勢 */

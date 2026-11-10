@@ -767,6 +767,142 @@ static void test_loop_policy_not_used_in_descent(void)
     end_checks();
 }
 
+
+/* ---- 提案: サンプル0個の周期は制御を進めない／INT1張り付きの検出 ---- */
+
+static void test_loop_int1_stuck_latch(void)
+{
+    /* ピンがHighのまま、読むと0個。8周期で張り付きをラッチ → IMU途絶の非常停止、読み直しも止まる */
+    to_standby();
+    fake_imu_pin_high = true; fake_imu_read_samples = 0;
+    int n = 0;
+    for (int i = 0; i < (int)FC_LOOP_INT1_STUCK_LIMIT - 1; i++) {
+        imu_int1_event_t ev = { ++fake_imu_int1_count, fake_now_us };
+        bool pend = control_loop_run_once(&L, &ev); steps++; n++;
+        CHECK(pend); CHECK(!L.int1_stuck);
+    }
+    imu_int1_event_t ev = { ++fake_imu_int1_count, fake_now_us };
+    bool pend = control_loop_run_once(&L, &ev); steps++;
+    CHECK(!pend); CHECK(!L.int1_pending);
+    CHECK(L.int1_stuck); CHECK(L.stats.int1_stuck == 1);
+    CHECK(L.fsm.state == FS_EMERGENCY_STOP); CHECK(L.fsm.estop_reason == ESTOP_IMU_TIMEOUT);
+    CHECK(L.stats.no_sample == FC_LOOP_INT1_STUCK_LIMIT);
+    /* ピンが戻って読み出しが正常になってもラッチは残る */
+    fake_imu_pin_high = false; fake_imu_read_samples = 8;
+    run(50);
+    CHECK(L.int1_stuck); CHECK(L.stats.int1_stuck == 1);
+    CHECK(L.fsm.state == FS_EMERGENCY_STOP);
+    end_checks();
+}
+
+static void test_loop_int1_genuine_miss_no_latch(void)
+{
+    /* ピンがHighでも8組(16ワード)読めているなら本物の取りこぼし。ラッチしない */
+    to_flight(0.3f);
+    fake_imu_pin_high = true; fake_imu_read_samples = 8;
+    for (int i = 0; i < (int)FC_LOOP_INT1_STUCK_LIMIT * 5; i++) {
+        imu_int1_event_t ev = { ++fake_imu_int1_count, fake_now_us };
+        control_loop_run_once(&L, &ev); steps++;
+    }
+    CHECK(!L.int1_stuck); CHECK(L.int1_stuck_count == 0); CHECK(L.stats.int1_stuck == 0);
+    CHECK(L.fsm.state == FS_FLIGHT);
+    /* 散発の疑わしい周期は、正常な周期で数え直し */
+    for (int k = 0; k < 5; k++) {
+        fake_imu_read_samples = 0;
+        for (int i = 0; i < (int)FC_LOOP_INT1_STUCK_LIMIT - 1; i++) {
+            imu_int1_event_t ev = { ++fake_imu_int1_count, fake_now_us };
+            control_loop_run_once(&L, &ev); steps++;
+        }
+        fake_imu_read_samples = 8;
+        imu_int1_event_t ev = { ++fake_imu_int1_count, fake_now_us };
+        control_loop_run_once(&L, &ev); steps++;
+    }
+    CHECK(!L.int1_stuck);
+    end_checks();
+}
+
+static void test_loop_hold_no_samples(void)
+{
+    /* 飛行中にサンプル0個の周期: PIDを進めず、前回の指令を保つ */
+    to_flight(0.4f);
+    body_tilt_roll(3.0f);
+    run(30);
+    CHECK(L.fsm.state == FS_FLIGHT && L.motors_on);
+    controller_output_t prev = L.out;
+    float duty[FC_NUM_MOTORS];
+    for (int i = 0; i < FC_NUM_MOTORS; i++) duty[i] = L.duty[i];
+    pid_controller_t pid = L.pid;
+    controller_output_t shadow = L.pid_shadow_out;
+    uint32_t ns = L.stats.no_sample;
+    fake_imu_read_samples = 0;
+    cycle();
+    CHECK(L.stats.no_sample == ns + 1);
+    CHECK(L.fsm.state == FS_FLIGHT); CHECK(L.motors_on);
+    CHECK(memcmp(&L.pid, &pid, sizeof(pid)) == 0);      /* 積分・フィルタとも不変 */
+    CHECK(memcmp(&L.out, &prev, sizeof(prev)) == 0);
+    CHECK(memcmp(&L.pid_shadow_out, &shadow, sizeof(shadow)) == 0);
+    for (int i = 0; i < FC_NUM_MOTORS; i++) { CHECK(L.duty[i] == duty[i]); CHECK(fake_pwm_duty[i] == duty[i]); }
+    CHECK(L.policy_us == 0);
+    end_checks();
+}
+
+static void test_loop_hold_read_error(void)
+{
+    /* 読み出し失敗が1周期だけなら前回の指令を保ち、非常停止にしない（上限3） */
+    to_flight(0.4f);
+    body_tilt_roll(3.0f);
+    run(30);
+    controller_output_t prev = L.out;
+    float duty[FC_NUM_MOTORS];
+    for (int i = 0; i < FC_NUM_MOTORS; i++) duty[i] = L.duty[i];
+    pid_controller_t pid = L.pid;
+    fake_imu_read_result = IMU_ERR_SPI;
+    cycle();
+    CHECK(L.fsm.state == FS_FLIGHT); CHECK(L.motors_on);
+    CHECK(memcmp(&L.pid, &pid, sizeof(pid)) == 0);
+    CHECK(memcmp(&L.out, &prev, sizeof(prev)) == 0);
+    for (int i = 0; i < FC_NUM_MOTORS; i++) CHECK(L.duty[i] == duty[i]);
+    fake_imu_read_result = IMU_OK;
+    run(10);
+    CHECK(L.fsm.state == FS_FLIGHT);
+    end_checks();
+}
+
+static void test_loop_stuck_no_busy_spin(void)
+{
+    /* control_loop_step 経由: 張り付きでも読み出し回数はラッチ後に増えない（ビジー回りしない） */
+    to_standby();
+    fake_imu_pin_high = true; fake_imu_read_samples = 0;
+    run((int)FC_LOOP_INT1_STUCK_LIMIT + 2);
+    CHECK(L.int1_stuck); CHECK(!L.int1_pending);
+    CHECK(L.fsm.state == FS_EMERGENCY_STOP && L.fsm.estop_reason == ESTOP_IMU_TIMEOUT);
+    int reads = fake_imu_read_calls;
+    fake_imu_wait_timeout = true;                       /* 5ms待ち→タイムアウト（ピンはHighのまま）*/
+    run(100);
+    CHECK(fake_imu_read_calls == reads);                /* 救出の読み出しもしない */
+    CHECK(L.stats.rescues == 0);
+    CHECK(L.fsm.state == FS_EMERGENCY_STOP);
+    end_checks();
+}
+
+static void test_loop_no_sample_limit(void)
+{
+    /* 提案: ピンはLowでINT1は来るのにサンプル0個が続く。保持は FC_LOOP_NO_SAMPLE_LIMIT 周期までで、IMU途絶の非常停止 */
+    to_flight(0.4f);
+    run(30);
+    fake_imu_read_samples = 0;
+    for (int i = 0; i < (int)FC_LOOP_NO_SAMPLE_LIMIT - 1; i++) {
+        cycle();
+        CHECK(L.fsm.state == FS_FLIGHT); CHECK(L.motors_on);
+    }
+    CHECK(!L.int1_stuck);
+    cycle();
+    CHECK(L.fsm.state == FS_EMERGENCY_STOP); CHECK(L.fsm.estop_reason == ESTOP_IMU_TIMEOUT);
+    CHECK(!L.motors_on);
+    for (int i = 0; i < FC_NUM_MOTORS; i++) CHECK(fake_pwm_duty[i] == 0.0f);
+    end_checks();
+}
+
 const test_t g_tests_loop[] = {
     { "loop: 起動（PWM0→初期化→WDT開始、既定は本番の値）", test_loop_init_ok },
     { "loop: 飛行中でもスロットル0付近では回さない（提案）", test_loop_idle_throttle },
@@ -786,5 +922,11 @@ const test_t g_tests_loop[] = {
     { "loop: 方策の使用・取り上げ・ラッチ・選び直し", test_loop_policy_normal_and_latch },
     { "loop: 取り上げの各原因（人・角速度・NaN・時間・張りつき・失敗）", test_loop_policy_takeover_reasons },
     { "loop: 降下では方策を呼ばない", test_loop_policy_not_used_in_descent },
+    { "loop: INT1張り付きでラッチ→IMU途絶の非常停止（提案）", test_loop_int1_stuck_latch },
+    { "loop: 本物の取りこぼしはラッチしない", test_loop_int1_genuine_miss_no_latch },
+    { "loop: 飛行中サンプル0個の周期は前回の指令を保つ（提案）", test_loop_hold_no_samples },
+    { "loop: 飛行中の読み出し失敗1回は指令を保つ", test_loop_hold_read_error },
+    { "loop: 張り付き後はビジー回りしない（step経由）", test_loop_stuck_no_busy_spin },
+    { "loop: サンプル0個が続いたらIMU途絶（提案）", test_loop_no_sample_limit },
 };
 const int g_tests_loop_n = (int)(sizeof(g_tests_loop) / sizeof(g_tests_loop[0]));
