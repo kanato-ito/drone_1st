@@ -57,6 +57,7 @@ typedef struct {
     bool     estop;
     bool     takeover;
     float    throttle;
+    int      throttle_steps;   /* スロットル = 0.05 × steps。足し引きを整数で数え、浮動小数点の誤差を溜めない */
     uint32_t disarm_until_us;
     uint32_t seq;
     uint32_t next_us;
@@ -100,9 +101,9 @@ static void handle_key(int ch, uint32_t now_us)
         ipc_flags_request_estop(ipc_flags());
         pc.estop = true;
         printf(">> 非常停止の要求（電源入れ直しまで戻らない）\n"); pc.next_us = now_us; break;
-    case '+': pc.throttle += 0.05f; if (pc.throttle > 1.0f) pc.throttle = 1.0f; pc.next_us = now_us; break;
-    case '-': pc.throttle -= 0.05f; if (pc.throttle < 0.0f) pc.throttle = 0.0f; pc.next_us = now_us; break;
-    case '0': pc.throttle = 0.0f; pc.next_us = now_us; break;
+    case '+': if (pc.throttle_steps < 20) pc.throttle_steps++; pc.throttle = 0.05f * (float)pc.throttle_steps; pc.next_us = now_us; break;
+    case '-': if (pc.throttle_steps > 0) pc.throttle_steps--; pc.throttle = 0.05f * (float)pc.throttle_steps; pc.next_us = now_us; break;
+    case '0': pc.throttle_steps = 0; pc.throttle = 0.0f; pc.next_us = now_us; break;
     case 't': pc.takeover = !pc.takeover; printf(">> 取り上げ旗 %d\n", pc.takeover ? 1 : 0); pc.next_us = now_us; break;
     case 'w':
         if (flight_fsm_motors_allowed(L.fsm.state)) {
