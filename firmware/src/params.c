@@ -35,10 +35,10 @@ void params_set_defaults(params_t *p)
     }
     set_gains(&p->pid.angle[2], 2.0f, 0.0f, 0.0f, 0.0f, 1.5f, 0.0f);
     set_gains(&p->pid.rate[2],  0.5f, 0.5f, 0.0f, 0.5f, 3.0f, 50.0f);
-    p->pid.i_enable_thrust_g = 3.0f;   /* 仮: 回り始めの手前。これ以下では積分しない */
+    p->pid.i_enable_thrust_g = 9.0f;   /* 2026-11-13 決定（シミュ）: 浮く推力 約12.3g の7割強。3gでは床で積分が張りつき離陸直後に約15°傾いた。これ以下では積分しない */
 
     /* ---- 姿勢推定（仮）---- */
-    p->attitude.tau_s              = 0.5f;    /* 仮: 実機で調整 */
+    p->attitude.tau_s              = 2.0f;    /* 2026-11-13 初期値（シミュ: 横流れ中のずれ 0.5sで11°→2sで3.9°）。残りは実機で確認 */
     p->attitude.still_gyro_std_rps = 0.02f;   /* 仮: 約1.1dps。ODR 7.68kHz の8組平均の雑音（約0.06dps）より十分大きい */
     p->attitude.still_gyro_abs_max_rps = 0.1f; /* 仮・提案: 約5.7dps。センサーのゼロ点ずれ(数dps以下)より大きく取る */
     p->attitude.still_accel_tol_g  = 0.05f;

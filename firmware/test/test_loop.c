@@ -41,6 +41,9 @@ static void setup(void)
     fake_port_reset();
     fake_ipc_reset();
     params_set_defaults(&LP);
+    /* ループの試験は状態遷移を見るもの。傾きへの追従を速くして試験を短く保つため、τは既定値（2026-11-13 に 2.0s）
+     * によらず 0.5s に固定する。τそのものの性質は test_main.c の姿勢推定の試験が既定値で見る */
+    LP.attitude.tau_s = 0.5f;
     memset(&pkt, 0, sizeof(pkt)); memset(&pkt_sent, 0, sizeof(pkt_sent));
     pc_sending = false; pc_next_us = 0; pc_seq = 0; steps = 0; motor_violations = 0;
     fake_imu_gyro = (vec3f_t){ 0.01f, -0.02f, 0.005f };  /* 基板のゼロ点ずれ（バイアス推定の確認） */

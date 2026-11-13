@@ -70,7 +70,8 @@ static void test_attitude_still_and_bias(void)
 
     run_batches(&e, BATCHES_PER_S / 2, bias, up, 0.005f);
     CHECK(!attitude_is_still(&e));          /* 0.5秒ではまだ still_hold_ms(1000)に足りない */
-    run_batches(&e, BATCHES_PER_S * 3, bias, up, 0.005f);
+    /* 姿勢がバイアス推定の過渡から戻るのは τ（既定値）で決まるので、τの数倍待つ */
+    run_batches(&e, BATCHES_PER_S * 3 + (int)(BATCHES_PER_S * 5.0f * P.attitude.tau_s), bias, up, 0.005f);
     CHECK(attitude_is_still(&e));
     CHECK(attitude_bias_ready(&e));
     /* バイアスが収束: 雑音(±0.005, 8組平均)より十分小さい誤差 */
