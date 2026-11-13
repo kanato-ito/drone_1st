@@ -3,8 +3,9 @@
   1. hover        アーム → 離陸 → 高さ0.5mでホバリング
   2. disturbance  ホバリング中に、ロール・ピッチ・ヨーの順にトルクの短いパルス（外乱）を加え、
                   戻す向きに指令が出て元の姿勢に戻るかを見る。最後に一定のロールのトルク（重心のずれの代わり）
-  3. windup       傾いた床の上で、離陸しない推力のまま待ってから離陸する。積分がたまる場合（8g）と
-                  たまらない場合（i_enable_thrust_g より下の 2g）を比べる
+  3. windup       傾いた床の上で 8g/モーター（離陸しない推力）のまま待ってから離陸する。積分を始める
+                  しきい値 i_enable_thrust_g が 3g（元の仮の値）と 9g（2026-11-13 決定）とで比べる。
+                  3g のときは姿勢推定の時定数 tau_s 0.5秒と2秒（2026-11-13 決定）も比べる
   4. resistance   電池の内部抵抗を 0〜0.15Ω で振り、ホバリングと上昇で電圧が揺れないかを見る
 
 ファームには高さの制御が無い（目標は姿勢と1モーターあたりの推力）。そこで「操縦者の代わり」の
@@ -148,12 +149,25 @@ FLOOR_ROLL_RAD = 5.0 * DEG      # 床の傾き（アームできる上限 10° �
 WINDUP_TAKEOFF = 6.0
 
 
-def windup(wait_thrust_g: float, plot: bool = True, params: DroneParams | None = None) -> Result:
+I_ENABLE_OLD_G = 3.0       # 元の仮の値（浮く推力 約12.3g よりずっと下）
+I_ENABLE_DECIDED_G = 9.0   # 2026-11-13 決定（浮く推力の7割強）
+TAU_OLD_S = 0.5
+TAU_DECIDED_S = 2.0        # 2026-11-13 決定（初期値。残りは実機で確かめる）
+
+
+def windup(i_enable_g: float, tau_s: float, wait_thrust_g: float = 8.0, plot: bool = True,
+           params: DroneParams | None = None) -> Result:
     d = Drone(params, initial_euler_rad=(FLOOR_ROLL_RAD, 0.0, 0.0))
     pilot = AltitudePilot(d, takeoff_profile(t0=WINDUP_TAKEOFF), wait_thrust_g=wait_thrust_g)
-    name = f"windup_{wait_thrust_g:g}g"
-    title = f"3. 傾いた床（ロール+5°）で {wait_thrust_g:g}g/モーターで待ってから離陸"
-    return _run(name, d, Scenario(10.0, pilot), plot, title)
+
+    def setup(fc):
+        fc.set_param("pid.i_enable_thrust_g", i_enable_g)
+        fc.set_param("attitude.tau_s", tau_s)
+
+    name = f"windup_ien{i_enable_g:g}g_tau{tau_s:g}s"
+    title = (f"3. 傾いた床（ロール+5°）で {wait_thrust_g:g}g/モーター待って離陸"
+             f"（i_enable {i_enable_g:g}g、tau_s {tau_s:g}s）")
+    return _run(name, d, Scenario(10.0, pilot, fc_setup=setup), plot, title)
 
 
 # ---------------------------------------------------------------------------
@@ -248,8 +262,9 @@ def run_all(names: list[str] | None = None) -> None:
         _summary_disturbance(r)
         print(f"        グラフ: {r.png}")
     if "windup" in names:
-        for g in (8.0, 2.0):
-            r = windup(g)
+        for ien, tau in ((I_ENABLE_OLD_G, TAU_OLD_S), (I_ENABLE_OLD_G, TAU_DECIDED_S),
+                         (I_ENABLE_DECIDED_G, TAU_DECIDED_S)):
+            r = windup(ien, tau)
             _summary_windup(r)
             print(f"        グラフ: {r.png}")
     if "resistance" in names:

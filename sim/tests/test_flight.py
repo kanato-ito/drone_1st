@@ -75,25 +75,49 @@ def test_steady_torque_is_taken_by_integral(dist):
     assert abs(log["model_true_angle_rad"][w, 0].mean()) < 1.0 * DEG
 
 
-def test_windup_on_floor_is_bounded_and_gated():
-    wound = F.windup(8.0, plot=False).log
-    gated = F.windup(2.0, plot=False).log
-    i_lim = 1.0   # params.c の内側 roll の i_limit
-    i8 = wound["rate_integ_g"][F.at(wound, F.WINDUP_TAKEOFF - 0.01), 0]
-    i2 = gated["rate_integ_g"][F.at(gated, F.WINDUP_TAKEOFF - 0.01), 0]
-    # 床で 8g（i_enable_thrust_g=3g より上）待つと、積分は上限まで張りつく。2g ならたまらない
-    assert i8 == pytest.approx(-i_lim, abs=1e-3)
-    assert i2 == pytest.approx(0.0, abs=1e-6)
-    w = F.window(wound, F.WINDUP_TAKEOFF, F.WINDUP_TAKEOFF + 3.0)
-    over8 = -wound["model_true_angle_rad"][w, 0].min() / DEG
-    over2 = -gated["model_true_angle_rad"][w, 0].min() / DEG
-    # いまの仕組みでは、たまった積分のぶん離陸の直後に反対へ大きく傾く（2026-11-09: 約15°）
-    assert over8 > 5.0 > 1.0 > over2
+@pytest.fixture(scope="module")
+def windup_logs():
+    return {
+        "old": F.windup(F.I_ENABLE_OLD_G, F.TAU_OLD_S, plot=False).log,
+        "old_tau2": F.windup(F.I_ENABLE_OLD_G, F.TAU_DECIDED_S, plot=False).log,
+        "decided": F.windup(F.I_ENABLE_DECIDED_G, F.TAU_DECIDED_S, plot=False).log,
+    }
+
+
+def _integ_before_takeoff(log):
+    return log["rate_integ_g"][F.at(log, F.WINDUP_TAKEOFF - 0.01), 0]
+
+
+def _after_takeoff(log):
+    return F.window(log, F.WINDUP_TAKEOFF, F.WINDUP_TAKEOFF + 3.0)
+
+
+def test_windup_with_old_threshold(windup_logs):
+    # しきい値 3g のまま床で 8g 待つと、積分は上限（i_limit 1.0g）に張りつき、
+    # 離陸の直後に反対へ大きく傾く（2026-11-09: 約15°）。決定を変える理由になった現象
+    log = windup_logs["old"]
+    assert _integ_before_takeoff(log) == pytest.approx(-1.0, abs=1e-3)
+    assert -log["model_true_angle_rad"][_after_takeoff(log), 0].min() / DEG > 5.0
+    assert log["tripped"].max() == 0
+
+
+def test_no_windup_with_decided_threshold(windup_logs):
+    # 2026-11-13 決定: しきい値 9g（浮く推力の7割強）なら床の上で積分がたまらず、離陸で傾かない
+    log = windup_logs["decided"]
+    assert _integ_before_takeoff(log) == pytest.approx(0.0, abs=1e-6)
+    assert -log["model_true_angle_rad"][_after_takeoff(log), 0].min() / DEG < 1.0
+    assert log["tripped"].max() == 0
+
+
+def test_longer_tau_is_fooled_less_while_drifting(windup_logs):
     # 傾いたまま横に流れている間は、加速度センサーが「水平」に近い値を出す（比力は推力の向き＝機体のz軸）。
-    # 相補フィルタ（tau_s=0.5s）はそれに引かれて、推定が本当の傾きから大きくずれる（2026-11-09: 約11°）
-    err8 = np.abs(wound["angle_rad"][w, 0] - wound["model_true_angle_rad"][w, 0]).max() / DEG
-    assert err8 > 5.0
-    assert wound["tripped"].max() == 0 and gated["tripped"].max() == 0
+    # 相補フィルタはそれに引かれる。tau_s 0.5s で約11°、2s で約4° ずれる（2026-11-09〜13）
+    def err(log):
+        w = _after_takeoff(log)
+        return np.abs(log["angle_rad"][w, 0] - log["model_true_angle_rad"][w, 0]).max() / DEG
+
+    assert err(windup_logs["old"]) > 5.0
+    assert err(windup_logs["old_tau2"]) < 0.5 * err(windup_logs["old"])
 
 
 @pytest.mark.parametrize("r_ohm", [0.0, 0.15])
