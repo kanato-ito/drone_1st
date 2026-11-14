@@ -778,10 +778,9 @@ static void test_loop_int1_stuck_latch(void)
     /* ピンがHighのまま、読むと0個。8周期で張り付きをラッチ → IMU途絶の非常停止、読み直しも止まる */
     to_standby();
     fake_imu_pin_high = true; fake_imu_read_samples = 0;
-    int n = 0;
     for (int i = 0; i < (int)FC_LOOP_INT1_STUCK_LIMIT - 1; i++) {
         imu_int1_event_t ev = { ++fake_imu_int1_count, fake_now_us };
-        bool pend = control_loop_run_once(&L, &ev); steps++; n++;
+        bool pend = control_loop_run_once(&L, &ev); steps++;
         CHECK(pend); CHECK(!L.int1_stuck);
     }
     imu_int1_event_t ev = { ++fake_imu_int1_count, fake_now_us };
