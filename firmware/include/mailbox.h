@@ -26,6 +26,10 @@
 #include <stdbool.h>
 #include "control_packet.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * メールボックスへ書く（上書き）。
  * 呼ぶコア: コア1だけ（書く側は1つ。設計メモ4章）。頻度: 操縦パケット受信ごと（約50Hz）。
@@ -54,5 +58,9 @@ uint32_t mailbox_seq(void);
 
 /** 試験専用: seq を直接書き換える（書き込み途中=奇数の状態を作るため）。本番のコードからは呼ばない。 */
 void mailbox_test_force_seq(uint32_t seq);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* MAILBOX_H */

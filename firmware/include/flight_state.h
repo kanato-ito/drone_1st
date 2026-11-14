@@ -12,6 +12,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum {
     FS_BOOT = 0,           /**< 起動・初期化（モーター停止） */
     FS_WAIT_COMM,          /**< 通信待機（停止） */
@@ -84,5 +88,9 @@ bool flight_fsm_motors_allowed(flight_state_t s);
 const char *flight_state_name(flight_state_t s);
 const char *estop_reason_name(estop_reason_t r);
 const char *descent_reason_name(descent_reason_t r);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* FLIGHT_STATE_H */

@@ -14,6 +14,8 @@
 #ifndef IPC_H
 #define IPC_H
 
+/* C専用（ipc_flags.h / spsc_ring.h 経由で <stdatomic.h> を使う）。C++から include しない。 */
+
 #include <stdint.h>
 #include <stdbool.h>
 #include "mailbox.h"
@@ -21,6 +23,10 @@
 #include "spsc_ring.h"
 #include "log_record.h"
 #include "cmd_msg.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define IPC_LOG_QUEUE_CAPACITY   128 /**< 提案: 約136ms分。2のべき乗 */
 #define IPC_CMD_QUEUE_CAPACITY    32
@@ -59,5 +65,9 @@ bool ipc_reply_push(const cmd_reply_t *r);
 
 /** 返信を取り出す。コア1、TCP処理の中で。 */
 bool ipc_reply_pop(cmd_reply_t *r);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* IPC_H */

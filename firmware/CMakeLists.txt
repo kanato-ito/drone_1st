@@ -37,7 +37,13 @@ include(${CMAKE_CURRENT_LIST_DIR}/cmake/fc_sources.cmake)
 # ---- ライブラリ fc_core: 純粋C11の本体（SDK不要。ホストPCでもそのままビルドできる）----
 add_library(fc_core STATIC ${FC_CORE_SOURCES})
 target_include_directories(fc_core PUBLIC ${FC_INCLUDE_DIR})
-target_compile_options(fc_core PRIVATE -Wall -Wextra)
+target_compile_options(fc_core PRIVATE -Wall -Wextra
+    $<$<COMPILE_LANGUAGE:CXX>:${FC_CPP_COMPILE_OPTIONS}>)
+if(FC_CPP_MODULES)
+    message(STATUS "fc_core: C++版のモジュール = ${FC_CPP_MODULES}")
+else()
+    message(STATUS "fc_core: C++版のモジュール = (なし。全部C)")
+endif()
 
 # ---- ライブラリ fc_port_pico: Pico SDK に触る部分（差し替え境界。docs/hw_boundary.md）----
 add_library(fc_port_pico STATIC ${FC_PORT_PICO_SOURCES})

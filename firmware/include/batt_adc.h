@@ -10,6 +10,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** ADCとGP28を初期化し、入力をADC2に選ぶ。呼ぶコア: コア0（battery_init から）。頻度: 起動時に1回。 */
 void batt_adc_init(void);
 
@@ -18,5 +22,9 @@ void batt_adc_init(void);
  * 呼ぶコア: コア0（battery_update から）。頻度: 数周期に1回。所要: 数µs（ブロッキング）。
  */
 uint16_t batt_adc_read_raw(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* BATT_ADC_H */

@@ -12,6 +12,10 @@
 
 #include "params.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** 電池電圧を換算に使える範囲に丸める（下限は voltage_min_calc_v。上限は 2倍の余裕を見て非常に大きい値を弾く）。 */
 float thrust_model_clamp_voltage(const airframe_params_t *af, float battery_v);
 
@@ -20,5 +24,9 @@ float thrust_model_max_g(const airframe_params_t *af, float battery_v);
 
 /** デューティ = 推力 ÷ (K × V)、0..1 に丸める。NaN は0。コア0、1周期に1回×4モーター。 */
 float thrust_model_to_duty(const airframe_params_t *af, float thrust_g, float battery_v);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* THRUST_MODEL_H */

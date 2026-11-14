@@ -13,6 +13,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** control_packet_t.flags のビット。操縦パケットの旗として毎回送られる（設計メモ6章）。 */
 #define CTRL_FLAG_ARM_REQ     (1u << 0) /**< アーム要求。ボタンを押している間ずっと1。0→1の変化でアーム判定 */
 #define CTRL_FLAG_DISARM      (1u << 1) /**< ディスアーム */
@@ -27,5 +31,9 @@ typedef struct {
     uint32_t flags;     /**< CTRL_FLAG_* */
     uint32_t packet_seq;/**< 送信側の通し番号（欠落の統計用。メールボックスのseqとは別物） */
 } control_packet_t;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* CONTROL_PACKET_H */

@@ -13,6 +13,10 @@
 
 #include "fc_types.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** PWMを初期化（出力0%）。コア0、起動時に1回。ピンは board_pins.h。 */
 void motor_pwm_init(void);
 
@@ -21,5 +25,9 @@ void motor_pwm_set(const float duty[FC_NUM_MOTORS]);
 
 /** 全モーター0%。非常停止・アーム解除・タイムアウトで呼ぶ。コア0、必要なとき（冪等）。 */
 void motor_pwm_stop(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* MOTOR_PWM_H */

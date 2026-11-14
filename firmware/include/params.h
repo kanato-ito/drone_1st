@@ -14,6 +14,10 @@
 #include <stdbool.h>
 #include "fc_types.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** PIDの1軸ぶんのゲイン。単位は軸ごとに異なる（controller_pid.h 参照）。 */
 typedef struct {
     float kp, ki, kd;
@@ -157,5 +161,9 @@ const params_t *params_get(void);
 
 /** 変更用ポインタ。コア0の起動処理とコマンド処理だけが使う。 */
 params_t *params_get_mutable(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* PARAMS_H */

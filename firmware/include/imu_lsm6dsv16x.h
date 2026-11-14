@@ -26,6 +26,10 @@
 #include <stdbool.h>
 #include "fc_types.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** 1周期で受け取る最大サンプル組数（提案値）。通常8組。遅れて溜まった分の上限。 */
 #define IMU_BATCH_MAX_SAMPLES 32
 
@@ -147,5 +151,9 @@ imu_status_t imu_read_fifo(imu_batch_t *out);
 
 /** サンプル間隔 [s] = 1 / odr_hz_measured。姿勢推定のdtに使う。コア0、随時。 */
 float imu_sample_period_s(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* IMU_LSM6DSV16X_H */

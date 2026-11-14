@@ -8,6 +8,10 @@
 #ifndef BOARD_PINS_H
 #define BOARD_PINS_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* ---- モーター PWM ---- */
 #define BOARD_PWM_CH_A 0
 #define BOARD_PWM_CH_B 1
@@ -45,5 +49,9 @@
 /* ---- 電池電圧 ---- */
 #define BOARD_BATT_GPIO      28
 #define BOARD_BATT_ADC_INPUT 2  /* ADC2 */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* BOARD_PINS_H */

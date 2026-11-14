@@ -14,6 +14,10 @@
 #include "controller.h"
 #include "params.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     float integ;       /**< I項の出力への寄与（ki 込み） */
     float prev_meas;
@@ -40,5 +44,9 @@ controller_t controller_pid_handle(pid_controller_t *c);
  */
 float pid_axis_update(pid_axis_state_t *st, const pid_gains_t *g, float err, float meas,
                       float dt_s, bool integ_enable);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* CONTROLLER_PID_H */

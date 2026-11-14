@@ -20,6 +20,10 @@
 #include "params.h"
 #include "imu_lsm6dsv16x.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** 制御器・見張り役・着地検出が読む姿勢の出力。 */
 typedef struct {
     euler_t angle;      /**< 姿勢角 [rad]。ヨーは ±π に折り返し済み */
@@ -71,5 +75,9 @@ float attitude_tilt_rad(const attitude_state_t *s);
 
 /** 角度を (-π, π] に折り返す。ヨーの「目標とのずれ」を渡すときに使う（rev22）。 */
 float attitude_wrap_pi(float rad);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* ATTITUDE_H */

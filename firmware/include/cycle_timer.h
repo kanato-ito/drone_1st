@@ -15,6 +15,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** INT1が来ないと判断する時間 [µs]（設計メモ2章: 約5ms）。 */
 #define FC_INT1_TIMEOUT_US 5000u
 
@@ -56,5 +60,9 @@ void fc_wdt_feed(void);
  * コア0、起動時に1回。true なら非常停止（理由: WDT）へ（設計メモ5章）。
  */
 bool fc_wdt_caused_reboot(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* CYCLE_TIMER_H */

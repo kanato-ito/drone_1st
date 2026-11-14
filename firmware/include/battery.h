@@ -12,6 +12,10 @@
 #include <stdbool.h>
 #include "params.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     float    voltage_v;      /**< ローパス後の電圧 */
     uint16_t millivolt;      /**< ログ用 */
@@ -37,5 +41,9 @@ void battery_apply_sample(battery_state_t *b, const battery_params_t *p, float v
  * コア0。頻度: 提案として数周期に1回（電圧は遅い）。
  */
 void battery_update(battery_state_t *b, const battery_params_t *p, uint32_t now_ms);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* BATTERY_H */

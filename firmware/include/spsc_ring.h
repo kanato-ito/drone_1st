@@ -15,10 +15,20 @@
 #ifndef SPSC_RING_H
 #define SPSC_RING_H
 
+/* C専用ヘッダ（<stdatomic.h> / _Atomic を使う）。thrust_model / mixer / controller_pid / attitude の
+ * C++版はこのヘッダに依存しない（推移的 include も無い）。C++から include しない。 */
+#ifdef __cplusplus
+#error "C専用ヘッダ: C++から include しない"
+#endif
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdatomic.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct {
     uint8_t *buf;            /**< 呼び出し側が確保した capacity*elem_size バイト */
@@ -39,5 +49,9 @@ bool spsc_ring_pop(spsc_ring_t *r, void *elem);
 
 /** 現在の要素数の目安（どちらのコアからでも可。参考値）。 */
 uint32_t spsc_ring_count(const spsc_ring_t *r);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* SPSC_RING_H */
