@@ -43,6 +43,8 @@ class Scenario:
     controls: Callable[[float], Controls]
     disturbance: Callable[[float], Disturbance] = field(default=lambda t: NO_DISTURBANCE)
     battery_override_v: Callable[[float], float] | None = None   # 機体モデルの電圧の代わりに使う（試験用）
+    fc_setup: Callable[[FlightComputer], None] | None = None
+    # ↑ ファームの起動処理（params は既定値に戻る）のあとに呼ぶ。ゲインや params を変えて比べるとき用
 
 
 class Log(dict):
@@ -65,6 +67,8 @@ class Simulation:
     def run(self, scenario: Scenario) -> Log:
         fc, model = self.fc, self.model
         fc.reset()
+        if scenario.fc_setup is not None:
+            scenario.fc_setup(fc)
         model.reset(np.random.default_rng(self.seed))
         dt = fc.sample_period_s
         n_steps = int(round(scenario.duration_s / dt))
