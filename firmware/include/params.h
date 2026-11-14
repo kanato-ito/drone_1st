@@ -83,6 +83,7 @@ typedef struct {
     uint32_t wdt_timeout_ms;       /**< ウォッチドッグ（未決、提案） */
     float    arm_level_tol_rad;    /**< アーム時の「水平」許容 */
     float    arm_throttle_tol;     /**< アーム時の「スロットル0」許容 */
+    float    idle_throttle;        /**< 提案: 飛行中でもスロットルがこれ以下ならモーターを止める（0..1） */
 } safety_params_t;
 
 /** PIDの見張り役のしきい値（設計メモ5章）。 */

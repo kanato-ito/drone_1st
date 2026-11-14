@@ -30,7 +30,8 @@ typedef enum {
     ESTOP_TILT_EXCEEDED,     /**< 傾きが大きすぎる（仮60°） */
     ESTOP_OPERATOR,          /**< 操縦パケットの非常停止旗（提案） */
     ESTOP_DESCENT_LANDED,    /**< 非常時降下で着地を検出（提案） */
-    ESTOP_DESCENT_TIMEOUT    /**< 非常時降下が上限時間に達した（提案） */
+    ESTOP_DESCENT_TIMEOUT,   /**< 非常時降下が上限時間に達した（提案） */
+    ESTOP_INTERNAL_ERROR     /**< 提案: 状態値が不正（メモリ破損など）。安全側に止める */
 } estop_reason_t;
 
 /** 非常時降下に入った原因。最終的に非常停止になってもログに両方残す（提案、#5）。 */
@@ -71,6 +72,8 @@ void flight_fsm_init(flight_fsm_t *f, uint64_t now_us);
  * 入力から次の状態を決める。
  * 呼ぶコア: コア0。頻度: 1周期に1回。状態が変わったら true。
  * 非常停止からは抜けない。tilt_estop_rad は引数で受ける（params依存を避ける）。
+ * 遷移表は flight_state.c の先頭と docs/step3b_state_safety.md。評価順は上から（非常停止系が先）。
+ * 傾きが NaN のときは「傾き過大」として扱う（安全側）。
  */
 bool flight_fsm_step(flight_fsm_t *f, const flight_fsm_inputs_t *in, float tilt_estop_rad, uint64_t now_us);
 
@@ -80,5 +83,6 @@ bool flight_fsm_motors_allowed(flight_state_t s);
 /** 状態名（ログ・USB表示用）。コア0/1どちらでも可。 */
 const char *flight_state_name(flight_state_t s);
 const char *estop_reason_name(estop_reason_t r);
+const char *descent_reason_name(descent_reason_t r);
 
 #endif /* FLIGHT_STATE_H */

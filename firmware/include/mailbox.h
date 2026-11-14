@@ -2,7 +2,9 @@
  * @file mailbox.h
  * @brief 長さ1の上書きメールボックス（シーケンスロック）。コア1(書く)→コア0(読む)。
  *
- * 差し替え境界（ポート）ではない: 実装（ステップ④）は src/ の純粋C11（<stdatomic.h>）で書く。
+ * 差し替え境界（ポート）ではない: 実装は src/mailbox.c（純粋C11、<stdatomic.h>。ステップ③bで実装済み）。
+ * 書く側の割り込み禁止は呼ぶ側の責任（src/ はSDKに触れないため）。実機でコア1の割り込みの中で
+ * 書くなら、呼ぶ前に自分の割り込みを止める。
  * シミュレータは本物をそのままリンクし、コア1の役を自分で演じる（mailbox_write を呼ぶ）。
  *
  * ★オーナー実装に合わせて調整予定★
@@ -21,6 +23,7 @@
 #define MAILBOX_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "control_packet.h"
 
 /**
@@ -30,18 +33,26 @@
  */
 int mailbox_write(const control_packet_t *src);
 
-/**
- * メールボックスから読む。書き込み途中(seqが奇数/変化)なら読み直す。
- * 呼ぶコア: コア0。頻度: 1周期に1回（約940Hz）。
- * まだ一度も書かれていないときは全フィールド0が返る（seq が 0 で判別する）。
- */
-void mailbox_read(control_packet_t *dst);
+/** 読み直しの上限回数（提案。書き込みは短いので通常は1〜2回で済む）。 */
+#define MAILBOX_READ_MAX_RETRIES 16u
 
 /**
- * 現在の seq を返す（読むだけ。偶数なら安定、2ずつ増える＝書き込み回数×2）。
+ * メールボックスから読む。書き込み途中(seqが奇数/変化)なら読み直す。
+ * 提案: owner版は読めるまで無限に待つが、MAILBOX_READ_MAX_RETRIES 回で諦めて false を返す
+ * （dst は変えない）。呼ぶ側は前回の値のまま続け、次の周期でまた読む。
+ * 呼ぶコア: コア0。頻度: 1周期に1回（約940Hz）。
+ * まだ一度も書かれていないときは true で全フィールド0が返る（seq が 0 で判別する）。
+ */
+bool mailbox_read(control_packet_t *dst);
+
+/**
+ * 公開済みの seq を返す（読むだけ。常に偶数、2ずつ増える＝書き込み回数×2。書き込み中は1つ前の値）。
  * 呼ぶコア: コア0。頻度: 1周期に1回。
  * 前回値と違えば「新しいパケットが来た」。通信途絶の判定(コア0)に使う。0 は未受信。
  */
 uint32_t mailbox_seq(void);
+
+/** 試験専用: seq を直接書き換える（書き込み途中=奇数の状態を作るため）。本番のコードからは呼ばない。 */
+void mailbox_test_force_seq(uint32_t seq);
 
 #endif /* MAILBOX_H */

@@ -50,6 +50,7 @@ target_link_libraries(fc_port_pico PUBLIC
     hardware_pwm
     hardware_adc
     hardware_clocks
+    hardware_watchdog
 )
 target_compile_options(fc_port_pico PRIVATE -Wall -Wextra)
 
@@ -85,6 +86,23 @@ pico_set_program_version(control_bench "0.1")
 pico_enable_stdio_usb(control_bench 1)
 pico_enable_stdio_uart(control_bench 0)
 pico_add_extra_outputs(control_bench)
+
+# ---- 試験アプリ loop_bench（ステップ③b）----
+# 状態機械つきの制御ループをブレッドボードで回す。PWM出力は control_bench と同じく既定で無効
+# （上の FC_BENCH_PWM_ENABLE=ON のときだけ有効。必ずプロペラを外す。デューティ上限 0.30）。
+# mailbox / ipc_flags は src/ の本物（fc_core）。ベンチではコア0がPC役でメールボックスに書く（書く人は1人）。
+add_executable(loop_bench apps/loop_bench.c)
+target_compile_options(loop_bench PRIVATE -Wall -Wextra)
+target_link_libraries(loop_bench PRIVATE fc_core fc_port_pico)
+if(FC_BENCH_PWM_ENABLE)
+    target_compile_definitions(loop_bench PRIVATE FC_BENCH_PWM_ENABLE=1)
+endif()
+
+pico_set_program_name(loop_bench "loop_bench")
+pico_set_program_version(loop_bench "0.1")
+pico_enable_stdio_usb(loop_bench 1)
+pico_enable_stdio_uart(loop_bench 0)
+pico_add_extra_outputs(loop_bench)
 
 # ---- 本体 drone_fw（ステップ③以降）の雛形 ----
 # add_executable(drone_fw src/main.c ...)

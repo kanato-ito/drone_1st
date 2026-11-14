@@ -15,11 +15,17 @@
 #include "params.h"
 #include "attitude.h"
 
+/** 直前のホバリング推力を追うローパスの係数（1周期あたり）。約940Hzで時定数約0.5秒（提案、仮）。 */
+#define DESCENT_HOVER_LPF_ALPHA 0.002f
+
 typedef struct {
     float    hover_thrust_est_g; /**< 飛行中のスロットルのゆっくりした平均 */
+    bool     hover_primed;       /**< 内部: 最初の1回は平均をそのサンプルで初期化 */
     uint64_t start_us;
     bool     shock_seen;
+    bool     quiet_active;       /**< 内部: 衝撃のあと静かな状態が続いている最中 */
     uint64_t quiet_since_us;
+    float    yaw_hold_rad;       /**< 降下開始時のヨー（保持する目標） */
 } descent_t;
 
 typedef struct {

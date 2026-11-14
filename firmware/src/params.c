@@ -35,10 +35,10 @@ void params_set_defaults(params_t *p)
     }
     set_gains(&p->pid.angle[2], 2.0f, 0.0f, 0.0f, 0.0f, 1.5f, 0.0f);
     set_gains(&p->pid.rate[2],  0.5f, 0.5f, 0.0f, 0.5f, 3.0f, 50.0f);
-    p->pid.i_enable_thrust_g = 3.0f;   /* 仮: 回り始めの手前。これ以下では積分しない */
+    p->pid.i_enable_thrust_g = 9.0f;   /* 2026-11-13 決定（シミュ）: 浮く推力 約12.3g の7割強。3gでは床で積分が張りつき離陸直後に約15°傾いた。これ以下では積分しない */
 
     /* ---- 姿勢推定（仮）---- */
-    p->attitude.tau_s              = 0.5f;    /* 仮: 実機で調整 */
+    p->attitude.tau_s              = 2.0f;    /* 2026-11-13 初期値（シミュ: 横流れ中のずれ 0.5sで11°→2sで3.9°）。残りは実機で確認 */
     p->attitude.still_gyro_std_rps = 0.02f;   /* 仮: 約1.1dps。ODR 7.68kHz の8組平均の雑音（約0.06dps）より十分大きい */
     p->attitude.still_gyro_abs_max_rps = 0.1f; /* 仮・提案: 約5.7dps。センサーのゼロ点ずれ(数dps以下)より大きく取る */
     p->attitude.still_accel_tol_g  = 0.05f;
@@ -71,13 +71,17 @@ void params_set_defaults(params_t *p)
     p->battery.v_low             = 3.6f;   /* 仮 */
     p->battery.low_hold_ms       = 500;    /* 仮 */
 
-    /* ---- 安全系（③bで使う。今は既定値だけ）---- */
+    /* ---- 安全系（③bで使う。すべて仮・提案）----
+     * wdt_timeout_ms: 100ms（仮）。1周期は約1ms、IMU途絶時の時間基準は5ms。USB printf の詰まりを許す余裕も見て100。
+     * 実機で周期の最悪値を測って詰める。 */
     p->safety.tilt_estop_rad     = 60.0f * 0.017453293f;
     p->safety.comm_timeout_ms    = 500;
     p->safety.imu_timeout_us     = 5000;
     p->safety.wdt_timeout_ms     = 100;
     p->safety.arm_level_tol_rad  = 10.0f * 0.017453293f;
     p->safety.arm_throttle_tol   = 0.05f;
+    /* 提案: スロットル0付近では、アーム中でも回さない（地上で傾いていると姿勢制御だけでモーターが回るのを防ぐ） */
+    p->safety.idle_throttle      = 0.05f;
     p->guard.tilt_takeover_rad   = 30.0f * 0.017453293f;
     p->guard.rate_takeover_rps   = 8.0f;
     p->guard.policy_sat_ratio    = 0.95f;
@@ -125,6 +129,23 @@ bool params_validate(const params_t *p)
     const battery_params_t *b = &p->battery;
     if (!(b->adc_divider_ratio > 0.0f) || !(b->lpf_tau_s > 0.0f) || !(b->v_min < b->v_max) ||
         !(b->v_low >= b->v_min) || !(b->v_low <= b->v_max)) return false;
+    /* 安全系（③bで使う）。明らかな矛盾・NaN・0以下を弾く */
+    const safety_params_t *sf = &p->safety;
+    if (!(isfinite(sf->tilt_estop_rad) && sf->tilt_estop_rad > 0.0f && sf->tilt_estop_rad <= 3.14159265f)) return false;
+    if (!(sf->comm_timeout_ms > 0) || !(sf->imu_timeout_us > 0)) return false;
+    /* WDTは INT1 待ち(5ms)より十分長くしないと、IMU途絶の時間基準(5ms)の間にリセットされる */
+    if (!(sf->wdt_timeout_ms >= 20)) return false;
+    if (!(isfinite(sf->arm_level_tol_rad) && sf->arm_level_tol_rad > 0.0f) || !ok_nonneg(sf->arm_throttle_tol)) return false;
+    if (!(isfinite(sf->idle_throttle) && sf->idle_throttle >= 0.0f && sf->idle_throttle < 1.0f)) return false;
+    const guard_params_t *gd = &p->guard;
+    if (!(isfinite(gd->tilt_takeover_rad) && gd->tilt_takeover_rad > 0.0f && gd->tilt_takeover_rad < sf->tilt_estop_rad)) return false;
+    if (!(isfinite(gd->rate_takeover_rps) && gd->rate_takeover_rps > 0.0f)) return false;
+    if (!(isfinite(gd->policy_sat_ratio) && gd->policy_sat_ratio > 0.0f && gd->policy_sat_ratio <= 1.0f)) return false;
+    if (!(gd->policy_sat_cycles > 0) || !(gd->policy_budget_us > 0)) return false;
+    const descent_params_t *ds = &p->descent;
+    if (!(isfinite(ds->thrust_ratio) && ds->thrust_ratio > 0.0f && ds->thrust_ratio <= 1.0f)) return false;
+    if (!(ds->max_time_ms > 0) || !ok_nonneg(ds->shock_g) || !ok_nonneg(ds->quiet_rate_rps) ||
+        !ok_nonneg(ds->quiet_accel_tol_g)) return false;
     return true;
 }
 
