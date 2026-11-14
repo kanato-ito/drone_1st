@@ -178,7 +178,12 @@ R_SWEEP_OHM = (0.0, 0.05, 0.10, 0.15)
 CLIMB_T = 6.0
 
 
-def resistance(r_ohm: float, plot: bool = True, v_open_v: float = 3.8) -> Result:
+V_LOW_FOR_SWEEP = 2.9   # 電圧の揺れだけを見るときの低電圧しきい値（ファームの既定 3.6V だと降下に入るため）
+
+
+def resistance(r_ohm: float, plot: bool = True, v_open_v: float = 3.8, v_low: float | None = V_LOW_FOR_SWEEP,
+               duration_s: float = 10.0) -> Result:
+    """v_low=None ならファームの既定の低電圧しきい値のまま（設計メモ7章 #7 で未決）。"""
     params = DroneParams()
     params.battery.r_internal_ohm = r_ohm
     params.battery.v_open_v = v_open_v
@@ -191,8 +196,16 @@ def resistance(r_ohm: float, plot: bool = True, v_open_v: float = 3.8) -> Result
         return z + 0.5 * ramp01(t, CLIMB_T, CLIMB_T + 0.5)    # 6秒で 0.5m → 1.0m に急いで上がる
 
     pilot = AltitudePilot(d, z_target)
-    title = f"4. 内部抵抗 {r_ohm:.2f}Ω（開放電圧 {v_open_v:.2f}V）でホバリング → 6秒で上昇"
-    return _run(f"resistance_{int(round(r_ohm * 1000)):03d}mohm", d, Scenario(10.0, pilot), plot, title)
+
+    def setup(fc):
+        if v_low is not None:
+            fc.set_param("battery.v_min", min(v_low, fc.param("battery.v_min")))   # params_validate: v_low ≥ v_min
+            fc.set_param("battery.v_low", v_low)
+
+    vl = "既定" if v_low is None else f"{v_low:g}V"
+    title = f"4. 内部抵抗 {r_ohm:.2f}Ω（開放電圧 {v_open_v:.2f}V、v_low {vl}）でホバリング → 6秒で上昇"
+    name = f"resistance_{int(round(r_ohm * 1000)):03d}mohm" + ("_vlow_default" if v_low is None else "")
+    return _run(name, d, Scenario(duration_s, pilot, fc_setup=setup), plot, title)
 
 
 # ---------------------------------------------------------------------------

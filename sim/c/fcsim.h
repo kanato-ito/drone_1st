@@ -2,12 +2,11 @@
  * @file fcsim.h
  * @brief シミュレータとファームの境目。Python（ctypes）から呼ぶ関数だけをここに並べる。
  *
- * 中身は2つ:
+ * 中身は3つ:
  *  1. ポートの偽物（port_sim.c）を外から操作する関数 … IMUのサンプルを入れる、時刻を進める、
  *     電池ADCの値を決める、PWMのデューティを読む。偽物が守ることは docs/hw_boundary.md 3章。
- *  2. 1周期を回す関数（fcsim_step）… いまは control_bench.c と同じ順に③aの信号の流れを呼ぶ
- *     「仮の1周期」。ファームに control_loop_run_once（ステップ③b）ができたら、中身をそれに
- *     置き換える。Python側の呼び方は変えない。
+ *  2. コア1の役 … 操縦パケットを本物のメールボックス（mailbox_write）に書き、旗（ipc_flags）を立てる。
+ *  3. 1周期を回す関数（fcsim_step）… 本物の control_loop_run_once を1回呼ぶ（ステップ③b以降）。
  *
  * ファームの状態（params など）は静的変数1組だけなので、1プロセスで同時に動かせる機体は1機。
  * 強化学習で並列に回すときはプロセスを分ける。
@@ -49,21 +48,49 @@ FCSIM_API void fcsim_get_duty(float duty_out[4]);
 /** fc_wdt_feed が呼ばれた回数。 */
 FCSIM_API uint32_t fcsim_wdt_feed_count(void);
 
-/* ---------------- 2. ファームを回す ---------------- */
+/* 試験用: INT1ピンを High のままにする（張り付き）。0 で戻す。 */
+FCSIM_API void fcsim_set_int1_pin_high(int32_t high);
+
+/* 試験用: 次の n 回の imu_read_fifo を SPIの失敗（IMU_ERR_SPI）にする。FIFOの中身は残る。 */
+FCSIM_API void fcsim_imu_fail_reads(uint32_t n);
+
+/** fc_wdt_start に渡された時間 [ms]（0 = まだ始まっていない）。 */
+FCSIM_API uint32_t fcsim_wdt_timeout_ms(void);
+
+/* ---------------- 2. コア1の役 ---------------- */
+
+/**
+ * 操縦パケットを1つ受けたことにする（コア1の役）。本物の mailbox_write で書き、
+ * 旗に CTRL_FLAG_DISARM / CTRL_FLAG_ESTOP があれば ipc_flags_request_disarm / _estop も呼ぶ。
+ * roll/pitch/yaw は rad、throttle は 0..1（ファームが × throttle_full_thrust_g で推力にする）。
+ * flags は control_packet.h の CTRL_FLAG_*。実機ではおよそ50Hzで届く。
+ */
+FCSIM_API void fcsim_send_packet(float roll, float pitch, float yaw, float throttle, uint32_t flags);
+
+/* ---------------- 3. ファームを回す ---------------- */
 
 /** 1周期ごとの記録（グラフ用）。並びを変えたら Python の fc.py も直すこと。 */
 typedef struct {
-    int32_t  armed;           /**< 1 = 制御を回している */
-    int32_t  tripped;         /**< 1 = 傾き過大で止めた（ディスアームまで保持） */
+    int32_t  state;           /**< flight_state_t（0 起動 / 1 通信待機 / 2 飛行指示待機 / 3 飛行 / 4 非常時降下 / 5 非常停止） */
+    int32_t  estop_reason;    /**< estop_reason_t */
+    int32_t  descent_reason;  /**< descent_reason_t */
+    int32_t  armed;           /**< 1 = 飛行か非常時降下（モーターを回してよい状態） */
+    int32_t  tripped;         /**< 1 = 非常停止 */
+    int32_t  motors_on;       /**< 1 = この周期 motor_pwm_set を呼んだ */
     int32_t  still;           /**< 姿勢推定の静止判定 */
     int32_t  bias_ready;      /**< バイアスを求め終わった */
     int32_t  batch_count;     /**< この周期に読んだサンプル数 */
-    uint32_t cycle;           /**< 周期番号 */
+    int32_t  batt_low;        /**< 電池低下を確定した */
+    int32_t  int1_stuck;      /**< INT1張り付きをラッチした */
+    int32_t  int1_pending;    /**< 読み終えてもINT1ピンがHigh（すぐもう一度回す） */
+    uint32_t no_sample_count; /**< サンプル0個の連続周期数 */
+    uint32_t imu_fail_count;  /**< 読み出しの連続失敗数 */
+    uint32_t cycle;           /**< 処理した周期の数（stats.cycles） */
     float    angle_rad[3];    /**< 推定した姿勢 roll, pitch, yaw */
     float    rate_rps[3];     /**< 推定した角速度（バイアス補正後） */
     float    accel_g[3];      /**< 直近の加速度 */
     float    bias_rps[3];     /**< ジャイロのバイアス推定 */
-    float    target_rad[3];   /**< 目標姿勢 roll, pitch, yaw */
+    float    target_rad[3];   /**< 目標姿勢 roll, pitch, yaw（ヨーはアーム時の向きを基準に合わせたもの） */
     float    target_thrust_g; /**< 目標推力（1モーターあたり） */
     float    rate_target_rps[3]; /**< 外側PIDの出力（目標角速度） */
     float    out_thrust_g;    /**< 制御器の出力: 推力 */
@@ -76,28 +103,23 @@ typedef struct {
     float    mix_rp_scale;
     float    batt_v;          /**< ローパス後の電池電圧（ファームが換算に使う値） */
     float    batt_raw_v;      /**< ローパス前 */
-    float    duty[4];         /**< 出したデューティ */
+    float    duty[4];         /**< PWMに出したデューティ（ポートの偽物が受けた値） */
 } fcsim_telemetry_t;
 
-/** 起動処理（params を既定値に、IMU・PWM・電池・姿勢推定・PIDを初期化）。0 = 成功。何度呼んでも最初からやり直す。 */
-FCSIM_API int32_t fcsim_init(void);
-
-/** 目標（操縦パケットの代わり）。角度は rad、推力は1モーターあたりの g。ヨーはアーム時の向きからのずれ。 */
-FCSIM_API void fcsim_set_target(float roll_rad, float pitch_rad, float yaw_rad, float thrust_g);
+/**
+ * 起動処理（params を既定値に → 電池ADCを batt_v に → ipc の旗とメールボックスを空に → control_loop_init）。
+ * 実機の電源投入と同じく、ADCには最初から電池の電圧が出ている（ローパスの初期値になる）。
+ * 0 = 成功。何度呼んでも最初からやり直す。起動に失敗すると状態が非常停止になる（戻り値は0のまま）。
+ */
+FCSIM_API int32_t fcsim_init(float batt_v);
 
 /**
- * アーム要求（仮の簡易手順。状態機械はステップ③bでファームに入る）。
- * 1 の間: 静止・バイアス確定・水平（params の arm_level_tol_rad 以内）がそろったらアームする。
- * 0 にするとディスアーム（モーター停止、バイアスの固定を外す）。
+ * 1周期回す（control_loop_run_once を1回）。呼ぶ前に fcsim_set_time_us で時計を合わせておく。
+ * int1 が 1 なら INT1 の立ち上がりが来たことにする（時刻は今の時計）。0 なら来ない周期
+ * （IMU途絶。run_once(NULL)）。FIFOが空でも int1=1 なら「来たのにサンプル0個」の周期になる。
+ * 戻り値: run_once の戻り値（1 = 読み終えてもINT1ピンがHigh。呼び出し側はすぐもう一度回す）。
  */
-FCSIM_API void fcsim_set_arm_request(int32_t arm);
-
-/**
- * 1周期回す。INT1が来た時刻 [µs] を渡す（仮想時間。呼ぶ前に fcsim_set_time_us で時計を合わせておく）。
- * FIFOにたまっている分を全部読み、姿勢推定→（アーム中なら）制御器→ミキサー→推力換算→PWM。
- * 戻り値: 読んだサンプル数（0ならFIFOが空で何もしていない）。
- */
-FCSIM_API int32_t fcsim_step(uint32_t int1_timestamp_us);
+FCSIM_API int32_t fcsim_step(int32_t int1);
 
 /** 直近の周期の記録をコピーする。 */
 FCSIM_API void fcsim_get_telemetry(fcsim_telemetry_t *out);
