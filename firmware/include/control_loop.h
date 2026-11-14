@@ -9,6 +9,8 @@
 #ifndef CONTROL_LOOP_H
 #define CONTROL_LOOP_H
 
+/* C専用（ipc.h 経由で <stdatomic.h> を使う）。C++から include しない。 */
+
 #include <stdint.h>
 #include <stdbool.h>
 #include "params.h"
@@ -26,6 +28,10 @@
 #include "cycle_timer.h"
 #include "log_record.h"
 #include "control_packet.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /** 電池ADCを読む周期数（電圧は遅い）。 */
 #define FC_LOOP_BATT_EVERY_N 8u
@@ -173,5 +179,9 @@ void control_loop_set_policy(control_loop_t *c, controller_t handle);
  *          false なら CMD_RESULT_REJECTED_STATE を返信する。
  */
 bool control_loop_params_change_allowed(const control_loop_t *c);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* CONTROL_LOOP_H */

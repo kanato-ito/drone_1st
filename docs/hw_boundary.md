@@ -67,3 +67,23 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev);
 - リンクに必要なもの: 上のポート4つ（imu, motor_pwm, 時計/WDT, batt_adc）に加え、`mailbox_*` `ipc_flags_*` と `ipc_flags()`（ipc.h）。
   本物は `src/mailbox.c` と `src/ipc_flags.c`（実装済み）なので、シミュレータもホスト試験もそのままリンクする。
 - 例: `test/test_loop.c` が、ここに書いたとおりの使い方（偽物の IMU を `fake_imu_*` で操作）をしている。
+
+## 7. 制御4モジュールのC/C++切り替え（提案）
+
+オーナー（kanato）が `thrust_model → mixer → controller_pid → attitude` の順にC++へ書き直す。`src/*.c` は参考例として残し、C++版は `src_cpp/<module>.cpp` に置く。
+C++版は**既存のヘッダと同じCのインターフェース**（Cリンケージ）を実装するので、他のC側はどちらにもリンクできる。ヘッダは `extern "C"` つき。
+C専用（`<stdatomic.h>`）の `ipc_flags.h` `spsc_ring.h`（と、経由する `ipc.h` `control_loop.h`）はC++から include しない。4モジュールはこれらに依存しない。
+
+切り替えはモジュールごと（提案: 1つずつ書き換えるため）。
+
+| 場面 | 指定 |
+| --- | --- |
+| Pico（CMake） | `-DFC_CPP_MODULES="thrust_model;mixer"` |
+| ホスト試験 | `make -C firmware/test CPP_MODULES="thrust_model mixer"` |
+| シミュレータ（ホストCMake） | `fc_sources.cmake` を include する前に `set(FC_CPP_MODULES ...)`、または `-DFC_CPP_MODULES=...`。`FC_CORE_SOURCES` が自動で置き換わる |
+
+- 全部C++にするなら `FC_CPP_MODULES="thrust_model;mixer;controller_pid;attitude"`（以前の案 `FC_CONTROL_LANG=CPP` 相当）。
+- 使える名前はこの4つだけ。違う名前や `src_cpp/<m>.cpp` が無いときは CMake が `FATAL_ERROR`、`make` が `error` で止まる。
+- `fc_sources.cmake` は `FC_CPP_COMPILE_OPTIONS`（`-fno-exceptions -fno-rtti -Wall -Wextra ...`）も出す。ホストCMakeは `target_compile_options(fc_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${FC_CPP_COMPILE_OPTIONS}>)` で .cpp にだけ適用し、`project()` に `CXX` を入れること（Pico側は適用済み）。
+- `make -C firmware/test` の `cxxheaders` が、`include/*.h`（C専用を除く）をg++で include できることを毎回確かめる。
+- 規則は `firmware/src_cpp/README.md`。

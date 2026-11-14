@@ -13,6 +13,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** モーター数（M1..M4）。配列の添字は 0..3 = M1..M4。 */
 #define FC_NUM_MOTORS 4
 
@@ -35,5 +39,9 @@ typedef struct {
     float pitch_rad;
     float yaw_rad;
 } euler_t;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* FC_TYPES_H */

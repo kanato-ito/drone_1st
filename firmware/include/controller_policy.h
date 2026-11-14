@@ -16,6 +16,10 @@
 #include "controller.h"
 #include "params.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define POLICY_HIDDEN 64
 
 /** float個数: W1+b1+W2+b2+W3+b3（この順、行優先。メモ未記載、提案）。 */
@@ -55,5 +59,9 @@ bool policy_stage_chunk(policy_controller_t *p, uint32_t offset_floats, const fl
  * コア0、重み転送の最後に1回、飛行指示待機のみ。失敗時は元の重みのまま。
  */
 bool policy_commit(policy_controller_t *p, uint32_t crc32, policy_activation_t act);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* CONTROLLER_POLICY_H */

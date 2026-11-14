@@ -17,6 +17,10 @@
 #include "controller.h"
 #include "params.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     float motor_g[FC_NUM_MOTORS]; /**< 各モーターの推力 [g]、0..motor_max_g */
     bool  saturated;              /**< 以下のどれかが働いた（ログ用） */
@@ -35,5 +39,9 @@ bool mixer_sign_table_valid(const int8_t sign[FC_NUM_MOTORS][3]);
  */
 void mixer_mix(const airframe_params_t *af, const controller_output_t *u,
                float motor_max_g, mixer_result_t *out);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* MIXER_H */

@@ -19,6 +19,10 @@
 #include "fc_types.h"
 #include "attitude.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum {
     CONTROLLER_PID = 0,
     CONTROLLER_POLICY = 1
@@ -68,5 +72,9 @@ typedef struct {
     const controller_ops_t *ops;
     void *self;
 } controller_t;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* CONTROLLER_H */

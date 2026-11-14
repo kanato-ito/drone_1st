@@ -15,6 +15,10 @@
 #include "params.h"
 #include "attitude.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum {
     TAKEOVER_NONE = 0,
     TAKEOVER_TILT,            /**< 傾きがやや大きい（仮30°） */
@@ -55,5 +59,9 @@ bool guard_check_pre(guard_t *g, const guard_params_t *gp, const attitude_state_
  */
 bool guard_check_post(guard_t *g, const guard_params_t *gp, const controller_output_t *policy_out,
                       float thrust_max_g, float torque_max_g, uint32_t elapsed_us);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* GUARD_H */

@@ -19,9 +19,19 @@
 #ifndef IPC_FLAGS_H
 #define IPC_FLAGS_H
 
+/* C専用ヘッダ（<stdatomic.h> / _Atomic を使う）。thrust_model / mixer / controller_pid / attitude の
+ * C++版はこのヘッダに依存しない（推移的 include も無い）。C++から include しない。 */
+#ifdef __cplusplus
+#error "C専用ヘッダ: C++から include しない"
+#endif
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdatomic.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct {
     _Atomic uint32_t estop;       /**< 書く人: コア1だけ */
@@ -46,5 +56,9 @@ bool ipc_flags_disarm_pending(const ipc_flags_t *f);
 
 /** ディスアームを処理済みにする（disarm_ack に disarm_req を写す）。コア0だけ。処理したとき。 */
 void ipc_flags_disarm_acknowledge(ipc_flags_t *f);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* IPC_FLAGS_H */

@@ -15,6 +15,10 @@
 #include "params.h"
 #include "attitude.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** 直前のホバリング推力を追うローパスの係数（1周期あたり）。約940Hzで時定数約0.5秒（提案、仮）。 */
 #define DESCENT_HOVER_LPF_ALPHA 0.002f
 
@@ -46,5 +50,9 @@ void descent_begin(descent_t *d, const attitude_state_t *att, uint64_t now_us);
 /** 降下中の目標と着地・時間切れを返す。コア0、降下中に毎周期。 */
 void descent_update(descent_t *d, const descent_params_t *p, const attitude_state_t *att,
                     uint64_t now_us, descent_target_t *out);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* EMERGENCY_DESCENT_H */

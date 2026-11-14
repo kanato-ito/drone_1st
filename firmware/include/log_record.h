@@ -11,6 +11,17 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* C++ では static_assert、C11 では _Static_assert（提案: 両対応の小マクロ） */
+#ifdef __cplusplus
+#define LOG_STATIC_ASSERT(cond, msg) static_assert(cond, msg)
+#else
+#define LOG_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
+#endif
+
 #define LOG_FLAG_MOTORS_ON       (1u << 0)
 #define LOG_FLAG_MIXER_SATURATED (1u << 1)
 #define LOG_FLAG_FIFO_OVERRUN    (1u << 2)
@@ -43,7 +54,11 @@ typedef struct {
     float duty[4];            /**< M1..M4 */
 } log_record_t;
 
-_Static_assert(sizeof(log_record_t) % 4 == 0, "log_record_t は4バイト境界");
-_Static_assert(sizeof(log_record_t) <= 128, "log_record_t が大きすぎる");
+LOG_STATIC_ASSERT(sizeof(log_record_t) % 4 == 0, "log_record_t は4バイト境界");
+LOG_STATIC_ASSERT(sizeof(log_record_t) <= 128, "log_record_t が大きすぎる");
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* LOG_RECORD_H */

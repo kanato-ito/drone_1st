@@ -17,6 +17,10 @@
 #include "log_record.h"
 #include "cmd_msg.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * コア1の入口。Wi-Fi・USBを初期化し、以後 UDP受信→mailbox_write、
  * ログ取り出し→UDP送信、TCP→コマンドキュー を繰り返す。戻らない。
@@ -43,5 +47,9 @@ size_t comm_encode_log_record(const log_record_t *rec, uint8_t *buf, size_t cap)
  * 呼ぶコア: コア1。頻度: 設定受信時のみ。
  */
 bool comm_decode_tcp_command(const uint8_t *buf, size_t len, cmd_msg_t *out);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* COMM_CORE1_H */

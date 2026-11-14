@@ -11,6 +11,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define CMD_CHUNK_FLOATS 48  /**< 断片あたりのfloat数（提案）。重みは約113断片 */
 
 typedef enum {
@@ -46,5 +50,9 @@ typedef struct {
     uint8_t  result;      /**< cmd_result_t */
     uint8_t  reserved[3];
 } cmd_reply_t;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* CMD_MSG_H */
