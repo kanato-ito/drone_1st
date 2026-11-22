@@ -122,6 +122,7 @@ def test_longer_tau_is_fooled_less_while_drifting(windup_logs):
 
 @pytest.mark.parametrize("r_ohm", [0.0, 0.15])
 def test_internal_resistance_sags_without_oscillation(r_ohm):
+    # 電圧の揺れだけを見るため、低電圧のしきい値は下げてある（F.V_LOW_FOR_SWEEP）
     log = F.resistance(r_ohm, plot=False).log
     w = F.window(log, 4.0, F.CLIMB_T)
     v = log["battery_v_true"][w]
@@ -130,3 +131,22 @@ def test_internal_resistance_sags_without_oscillation(r_ohm):
     assert v.std() < 0.01                      # 電圧と推力の補正が揺れ合っていない
     assert log["model_pos_m"][-1, 2] == pytest.approx(1.0, abs=0.02)
     assert tilt_deg(log, slice(None)) < 1.0
+
+
+def test_default_v_low_starts_descent_while_hovering():
+    # 設計メモ7章 #7（未決）: いまの v_low=3.6V のままだと、内部抵抗 0.05Ω でもホバリングの電圧降下だけで
+    # 電池低下と判定され、非常時降下に入る。電池が届いて内部抵抗を測ったら、しきい値か判定のしかたを決める
+    from fcsim import FS_EMERGENCY_DESCENT, FS_EMERGENCY_STOP
+    from fcsim.fc import DESCENT_BATTERY_LOW
+
+    log = F.resistance(0.05, plot=False, v_low=None).log
+    st = log["state"]
+    i = int(np.argmax(st == FS_EMERGENCY_DESCENT))
+    assert st[i] == FS_EMERGENCY_DESCENT
+    assert log["descent_reason"][i] == DESCENT_BATTERY_LOW
+    assert log["t"][i] < F.CLIMB_T                      # 上昇の前、ホバリング中に
+    assert log["battery_v_true"][i] > 3.5               # 電池そのものはまだ十分ある（開放電圧 3.8V）
+    assert st[-1] == FS_EMERGENCY_STOP                  # 降りたあとは止まる
+    assert log["model_pos_m"][-1, 2] == 0.0
+    # 注: 自作版の床はぶつかったときの衝撃を作らないので、着地の検出（衝撃→静か）は働かず、
+    # 降下の上限時間（3秒）で止まる。着地の検出は MuJoCo 版で確かめる（設計メモ6章）

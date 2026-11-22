@@ -29,11 +29,20 @@ class Telemetry(C.Structure):
     """fcsim.h の fcsim_telemetry_t と同じ並び。片方を変えたらもう片方も直す（大きさは起動時に確かめる）。"""
 
     _fields_ = [
+        ("state", C.c_int32),
+        ("estop_reason", C.c_int32),
+        ("descent_reason", C.c_int32),
         ("armed", C.c_int32),
         ("tripped", C.c_int32),
+        ("motors_on", C.c_int32),
         ("still", C.c_int32),
         ("bias_ready", C.c_int32),
         ("batch_count", C.c_int32),
+        ("batt_low", C.c_int32),
+        ("int1_stuck", C.c_int32),
+        ("int1_pending", C.c_int32),
+        ("no_sample_count", C.c_uint32),
+        ("imu_fail_count", C.c_uint32),
         ("cycle", C.c_uint32),
         ("angle_rad", C.c_float * 3),
         ("rate_rps", C.c_float * 3),
@@ -74,6 +83,17 @@ _I8x12 = C.c_int8 * 12
 PID_ANGLE, PID_RATE = 0, 1
 ROLL, PITCH, YAW = 0, 1, 2
 
+# flight_state.h の flight_state_t
+FS_BOOT, FS_WAIT_COMM, FS_STANDBY, FS_FLIGHT, FS_EMERGENCY_DESCENT, FS_EMERGENCY_STOP = range(6)
+STATE_NAMES = ("起動", "通信待機", "飛行指示待機", "飛行", "非常時降下", "非常停止")
+# estop_reason_t
+(ESTOP_NONE, ESTOP_IMU_INIT_FAIL, ESTOP_WDT_REBOOT, ESTOP_IMU_TIMEOUT, ESTOP_TILT_EXCEEDED, ESTOP_OPERATOR,
+ ESTOP_DESCENT_LANDED, ESTOP_DESCENT_TIMEOUT, ESTOP_INTERNAL_ERROR) = range(9)
+# descent_reason_t
+DESCENT_NONE, DESCENT_COMM_LOST, DESCENT_BATTERY_LOW = range(3)
+# control_packet.h の CTRL_FLAG_*
+FLAG_ARM_REQ, FLAG_DISARM, FLAG_ESTOP, FLAG_TAKEOVER_PID = 1, 2, 4, 8
+
 
 class FlightComputer:
     """PC上のファーム1台ぶん。"""
@@ -103,10 +123,13 @@ class FlightComputer:
         L.fcsim_set_batt_voltage.argtypes = [C.c_float]
         L.fcsim_get_duty.argtypes = [_F4]
         L.fcsim_wdt_feed_count.restype = C.c_uint32
+        L.fcsim_set_int1_pin_high.argtypes = [C.c_int32]
+        L.fcsim_imu_fail_reads.argtypes = [C.c_uint32]
+        L.fcsim_wdt_timeout_ms.restype = C.c_uint32
+        L.fcsim_send_packet.argtypes = [C.c_float] * 4 + [C.c_uint32]
+        L.fcsim_init.argtypes = [C.c_float]
         L.fcsim_init.restype = C.c_int32
-        L.fcsim_set_target.argtypes = [C.c_float] * 4
-        L.fcsim_set_arm_request.argtypes = [C.c_int32]
-        L.fcsim_step.argtypes = [C.c_uint32]
+        L.fcsim_step.argtypes = [C.c_int32]
         L.fcsim_step.restype = C.c_int32
         L.fcsim_get_telemetry.argtypes = [C.POINTER(Telemetry)]
         L.fcsim_telemetry_size.restype = C.c_int32
@@ -124,15 +147,20 @@ class FlightComputer:
 
     # ---- 起動・1周期 ----
 
-    def reset(self) -> None:
-        """起動処理からやり直す（params も既定値に戻る）。"""
-        rc = self._lib.fcsim_init()
+    def reset(self, battery_v: float = 3.8) -> None:
+        """電源を入れ直す（params も既定値に戻る）。battery_v は起動時に電池ADCに出ている電圧。"""
+        rc = self._lib.fcsim_init(float(battery_v))
         if rc != 0:
             raise RuntimeError(f"fcsim_init が失敗しました ({rc})")
 
-    def step(self, int1_timestamp_us: int) -> int:
-        """1周期回す。戻り値は読んだサンプル数。"""
-        return int(self._lib.fcsim_step(int1_timestamp_us & 0xFFFFFFFF))
+    def step(self, int1: bool = True) -> bool:
+        """1周期回す（control_loop_run_once）。int1=False は INT1 が来ない周期（IMU途絶）。
+        戻り値 True = 読み終えても INT1 ピンが High（すぐもう一度回す）。"""
+        return bool(self._lib.fcsim_step(1 if int1 else 0))
+
+    @property
+    def state(self) -> int:
+        return int(self.telemetry().state)
 
     def telemetry(self) -> Telemetry:
         self._lib.fcsim_get_telemetry(C.byref(self._tel))
@@ -168,14 +196,24 @@ class FlightComputer:
     def wdt_feed_count(self) -> int:
         return int(self._lib.fcsim_wdt_feed_count())
 
-    # ---- 操縦（メールボックスの代わり） ----
+    def wdt_timeout_ms(self) -> int:
+        return int(self._lib.fcsim_wdt_timeout_ms())
 
-    def set_target(self, roll_rad: float = 0.0, pitch_rad: float = 0.0, yaw_rad: float = 0.0,
-                   thrust_g: float = 0.0) -> None:
-        self._lib.fcsim_set_target(float(roll_rad), float(pitch_rad), float(yaw_rad), float(thrust_g))
+    def set_int1_pin_high(self, high: bool) -> None:
+        """試験用: INT1 ピンを High のままにする（張り付き）。"""
+        self._lib.fcsim_set_int1_pin_high(1 if high else 0)
 
-    def set_arm_request(self, arm: bool) -> None:
-        self._lib.fcsim_set_arm_request(1 if arm else 0)
+    def fail_imu_reads(self, n: int) -> None:
+        """試験用: 次の n 回の FIFO 読み出しを SPI の失敗にする。"""
+        self._lib.fcsim_imu_fail_reads(int(n))
+
+    # ---- コア1の役（操縦パケット → メールボックス、旗） ----
+
+    def send_packet(self, roll_rad: float = 0.0, pitch_rad: float = 0.0, yaw_rad: float = 0.0,
+                    throttle: float = 0.0, flags: int = 0) -> None:
+        """操縦パケットを1つ受けたことにする。throttle は 0..1、flags は FLAG_*。"""
+        self._lib.fcsim_send_packet(float(roll_rad), float(pitch_rad), float(yaw_rad), float(throttle),
+                                    int(flags))
 
     # ---- パラメータ ----
 

@@ -32,6 +32,8 @@ static int s_fifo_count;
 static bool s_fifo_overrun;
 static imu_config_t s_imu_cfg;
 static imu_int1_event_t s_int1;
+static bool s_int1_pin_high;   /* 試験用: INT1ピンの張り付き（fcsim_set_int1_pin_high） */
+static uint32_t s_read_fail;   /* 試験用: この回数だけ imu_read_fifo を失敗させる */
 
 imu_config_t imu_config_default(void)
 {
@@ -53,6 +55,8 @@ imu_status_t imu_init(const imu_config_t *cfg)
     s_fifo_overrun = false;
     s_int1.count = 0;
     s_int1.timestamp_us = 0;
+    s_int1_pin_high = false;
+    s_read_fail = 0;
     return IMU_OK;
 }
 
@@ -92,10 +96,24 @@ bool imu_wait_int1(uint32_t timeout_us, imu_int1_event_t *ev)
     return false;
 }
 
-bool imu_int1_pin_is_high(void) { return false; }
+bool imu_int1_pin_is_high(void) { return s_int1_pin_high; }
+
+void fcsim_set_int1_pin_high(int32_t high) { s_int1_pin_high = high != 0; }
+
+void fcsim_imu_fail_reads(uint32_t n) { s_read_fail = n; }
+
+void fcsim_int1_edge(void) { imu_on_int1_edge(); }
+
+void fcsim_get_int1_event(imu_int1_event_t *ev) { *ev = s_int1; }
 
 imu_status_t imu_read_fifo(imu_batch_t *out)
 {
+    if (s_read_fail > 0u) {
+        s_read_fail--;
+        out->count = 0;
+        out->words_read = 0;
+        return IMU_ERR_SPI;   /* SPIの失敗の代わり。FIFOの中身は残る */
+    }
     int n = s_fifo_count < IMU_BATCH_MAX_SAMPLES ? s_fifo_count : IMU_BATCH_MAX_SAMPLES;
     int tail = (s_fifo_head - s_fifo_count + SIM_FIFO_CAP) % SIM_FIFO_CAP;
     for (int i = 0; i < n; i++) {
@@ -159,11 +177,12 @@ void fcsim_get_duty(float duty_out[4])
 
 static uint64_t s_now_us;
 static uint32_t s_wdt_feeds;
+static uint32_t s_wdt_timeout_ms;
 
 uint64_t fc_clock_now_us64(void) { return s_now_us; }
 uint32_t fc_clock_now_us32(void) { return (uint32_t)s_now_us; }
 
-void fc_wdt_start(uint32_t timeout_ms) { (void)timeout_ms; }
+void fc_wdt_start(uint32_t timeout_ms) { s_wdt_timeout_ms = timeout_ms; }
 void fc_wdt_feed(void) { s_wdt_feeds++; }
 bool fc_wdt_caused_reboot(void) { return false; }
 
@@ -179,7 +198,10 @@ void port_sim_reset_clock(void)
 {
     s_now_us = 0;
     s_wdt_feeds = 0;
+    s_wdt_timeout_ms = 0;
 }
+
+uint32_t fcsim_wdt_timeout_ms(void) { return s_wdt_timeout_ms; }
 
 /* ---------------- 電池ADC ---------------- */
 

@@ -34,17 +34,6 @@ def test_sample_period_matches_firmware(fc):
     assert fc.sample_period_s == pytest.approx(1 / 7519.0, rel=1e-6)
 
 
-def test_one_cycle_reads_all_pending_samples(fc):
-    fc.reset()
-    for _ in range(SAMPLES_PER_CYCLE):
-        fc.push_imu([0, 0, 0], [0, 0, 1])
-    assert fc.imu_pending() == SAMPLES_PER_CYCLE
-    assert fc.step(1000) == SAMPLES_PER_CYCLE
-    assert fc.imu_pending() == 0
-    assert fc.step(2000) == 0   # 空なら何もしない
-    assert fc.wdt_feed_count() == 1
-
-
 def test_arms_only_after_still_and_level(fc):
     log = Simulation(BenchModel(), fc).run(
         Scenario(duration_s=2.0, controls=lambda t: Controls(arm=True, thrust_g=12.5)))
