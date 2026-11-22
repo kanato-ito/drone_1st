@@ -205,3 +205,28 @@ def test_imu_noise_and_bias():
     assert g.std(axis=0) == pytest.approx(np.full(3, p.gyro_noise_rps), rel=0.03)
     assert a.std(axis=0) == pytest.approx(np.full(3, p.accel_noise_g), rel=0.03)
     assert a.mean(axis=0) == pytest.approx([0, 0, 1], abs=1e-3)
+
+
+def test_imu_lever_arm_adds_centripetal_and_tangential_accel():
+    """IMU が重心から r ずれていると、回転で ω×(ω×r) と ω̇×r が加速度に乗る（突き合わせ #3）。"""
+    p = BodyParams(drag_n_per_mps=0.0, angular_drag_nm_per_rps=0.0)
+    r = np.array([0.0, 0.022, 0.0])
+    imu = Imu(ImuParams(gyro_noise_rps=0.0, accel_noise_g=0.0, gyro_bias_rps=np.zeros(3), pos_body_m=r))
+    imu0 = Imu(ImuParams(gyro_noise_rps=0.0, accel_noise_g=0.0, gyro_bias_rps=np.zeros(3),
+                         pos_body_m=np.zeros(3)))
+    # ヨーで一定の速さ 5 rad/s に回す（角加速度0）: 左にずれたIMUは右向き（-y）に ω²r の加速度を受ける
+    b = airborne_body(p)
+    b.omega_rps = np.array([0.0, 0.0, 5.0])
+    b.step(np.zeros(3), np.zeros(3), DT, NO_DISTURBANCE)
+    diff = imu.read(b)[1] - imu0.read(b)[1]
+    assert diff == pytest.approx([0.0, -25.0 * 0.022 / G0, 0.0], abs=1e-6)
+    # 止まった状態からロールのトルクだけ: 角加速度 α で z に α×r（ロール α>0 で左が上がる → +z）
+    b = airborne_body(p)
+    tau = np.array([1e-3, 0.0, 0.0])
+    b.step(np.zeros(3), tau, DT, NO_DISTURBANCE)
+    alpha = tau[0] / p.inertia_kgm2[0]
+    diff = imu.read(b)[1] - imu0.read(b)[1]
+    w = b.omega_rps
+    expect = (np.cross([alpha, 0.0, 0.0], r) + np.cross(w, np.cross(w, r))) / G0
+    assert diff == pytest.approx(expect, abs=1e-9)
+    assert diff[2] == pytest.approx(alpha * 0.022 / G0, rel=1e-3)

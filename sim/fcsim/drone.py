@@ -85,6 +85,10 @@ class ImuParams:
     gyro_bias_rps: np.ndarray = field(default_factory=lambda: np.array([0.0, 0.0, 0.44 * DEG]))
     # ↑ 機体座標。HW設計書7章: 静止でも z軸が +0.44dps ずれていた（x・yは書かれていないので0）
     accel_bias_g: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    # 重心から見たIMUの位置 [m]（機体座標 x前・y左・z上）。発注版基板ではIMUがPicoの左に約22mm
+    # （KiCadの配置 A2 X42.5 / Pico中心 X64.5、前が画面の上）。重心はPicoの中心とみなした（電池は裏面の中央）。
+    # 回ると遠心力 ω×(ω×r) と角加速度の分 ω̇×r が加速度に乗る（2026-11-22 突き合わせ #3）。0にすれば重心に置いた形
+    pos_body_m: np.ndarray = field(default_factory=lambda: np.array([0.0, 0.022, 0.0]))
 
 
 @dataclass
@@ -218,6 +222,7 @@ class RigidBody:
         if initial_euler_rad is not None:
             self.quat = quat_from_euler_zyx(*initial_euler_rad)
         self.omega_rps = np.zeros(3)                 # 機体座標
+        self.omega_dot_rps2 = np.zeros(3)            # 機体座標の角加速度（IMUのてこの腕の分に使う）
         self.accel_mps2 = np.zeros(3)                # 世界座標の加速度（IMUの比力に使う）
         self.on_ground = True
 
@@ -249,6 +254,7 @@ class RigidBody:
         if self.on_ground:
             self.vel_mps = np.zeros(3)
             self.omega_rps = np.zeros(3)
+            self.omega_dot_rps2 = np.zeros(3)
             self.accel_mps2 = accel
             return
 
@@ -258,6 +264,7 @@ class RigidBody:
         omega = self.omega_rps
         omega_dot = (tau - np.cross(omega, inertia * omega)) / inertia
         self.omega_rps = omega + omega_dot * dt
+        self.omega_dot_rps2 = omega_dot
         # 姿勢: 機体座標の角速度で dt だけ回す。q_new = q ⊗ exp(ω dt / 2)
         self.quat = quat_mul(self.quat, quat_from_rotvec(self.omega_rps * dt))
         self.quat /= np.linalg.norm(self.quat)
@@ -272,6 +279,7 @@ class RigidBody:
             self.pos_m[2] = 0.0
             self.vel_mps = np.zeros(3)
             self.omega_rps = np.zeros(3)
+            self.omega_dot_rps2 = np.zeros(3)
             self.accel_mps2 = np.zeros(3)
             self.on_ground = True
 
@@ -289,7 +297,11 @@ class RigidBody:
 # ---------------------------------------------------------------------------
 
 class Imu:
-    """本当の状態から IMU の出力を作る。IMU は重心にあるとみなす（ずれていると回転で余分な加速度が出る）。"""
+    """本当の状態から IMU の出力を作る。IMU は重心から pos_body_m だけずれた所にある。
+
+    角速度は剛体のどこでも同じなので、ずれの影響は加速度だけに出る:
+      a_IMU = a_重心 + ω̇ × r + ω × (ω × r)（機体座標）
+    """
 
     def __init__(self, p: ImuParams):
         self.p = p
@@ -308,6 +320,9 @@ class Imu:
         r = body.rotation()
         spec_world = body.accel_mps2 - np.array([0.0, 0.0, -G0])
         accel_g = r.T @ spec_world / G0 + p.accel_bias_g
+        lever = p.pos_body_m
+        w = body.omega_rps
+        accel_g = accel_g + (np.cross(body.omega_dot_rps2, lever) + np.cross(w, np.cross(w, lever))) / G0
         gyro = body.omega_rps + p.gyro_bias_rps
         if p.gyro_noise_rps > 0.0:
             gyro = gyro + self.rng.normal(0.0, p.gyro_noise_rps, 3)
