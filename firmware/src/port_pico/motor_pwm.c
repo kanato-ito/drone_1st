@@ -3,7 +3,8 @@
  * @brief モーターPWM 20kHz（motor_pwm.h）。
  *
  * 分周1・wrap = clk_sys/20kHz - 1（150MHzで7499）。M1/M4はスライス0のA/Bで周波数が共通。
- * デューティ0は常にLow。モーター駆動ゲートが反転かどうかは未確認（architecture.md #24）。
+ * デューティ0は常にLow。ローサイドN-MOSFETで反転なし（デューティ0=Low=停止。HW設計書4.2）。ゲートは10kΩでプルダウン。
+ * RP2350のエラッタE9に注意（モーター回路の解説 付録A：A2ステップでは8.2kΩ以下推奨、未解決）。
  */
 #include <math.h>
 #include "hardware/pwm.h"

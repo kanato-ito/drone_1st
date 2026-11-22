@@ -35,7 +35,8 @@ typedef enum {
     ESTOP_OPERATOR,          /**< 操縦パケットの非常停止旗（提案） */
     ESTOP_DESCENT_LANDED,    /**< 非常時降下で着地を検出（提案） */
     ESTOP_DESCENT_TIMEOUT,   /**< 非常時降下が上限時間に達した（提案） */
-    ESTOP_INTERNAL_ERROR     /**< 提案: 状態値が不正（メモリ破損など）。安全側に止める */
+    ESTOP_INTERNAL_ERROR,    /**< 提案: 状態値が不正（メモリ破損など）。安全側に止める */
+    ESTOP_IMU_CONFIG         /**< 提案: 飛行中にIMUの設定レジスタが書いた値と違った（リセット・化けなど）。数値はログに残るので末尾に追加 */
 } estop_reason_t;
 
 /** 非常時降下に入った原因。最終的に非常停止になってもログに両方残す（提案、#5）。 */
@@ -50,6 +51,7 @@ typedef struct {
     bool  boot_imu_ok;          /**< BOOT中のみ有効: imu_init 成功 */
     bool  wdt_reboot;           /**< BOOT中のみ有効 */
     bool  imu_timeout;          /**< INT1が来ない、または読み出し連続失敗 */
+    bool  imu_config_fault;     /**< 提案: IMUの設定レジスタの読み戻しが不一致（FLIGHT・降下中のみ非常停止。他の状態のFSMは見ない） */
     bool  comm_connected;       /**< 提案: 最初の有効パケットを受けた */
     bool  comm_lost;            /**< 新しいseqが comm_timeout_ms 来ない */
     bool  arm_rising_edge;      /**< アーム要求旗の0→1 */

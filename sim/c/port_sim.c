@@ -66,6 +66,10 @@ uint8_t imu_config_readback(imu_reg_readback_t *out, uint8_t max_entries)
 
 uint32_t imu_spi_actual_baud_hz(void) { return 7500000u; }
 
+/* レジスタは無いので、設定の定期確認も書き直しも常に成功 */
+imu_status_t imu_config_check_next(void) { return IMU_OK; }
+imu_status_t imu_config_rewrite(void) { return IMU_OK; }
+
 imu_status_t imu_fifo_flush(void)
 {
     s_fifo_head = 0;

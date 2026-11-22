@@ -5,7 +5,7 @@
 #include <math.h>
 #include "thrust_model.h"
 
-#define V_CALC_MAX 4.5f   /* 1セルの満充電(4.2V)に余裕を足した上限。分圧比の誤りで大きい値が来たとき用（提案） */
+#define V_CALC_MAX 4.5f   /* 1セルの満充電(LiHVで4.35V)に余裕を足した上限。分圧比の誤りで大きい値が来たとき用（提案） */
 
 float thrust_model_clamp_voltage(const airframe_params_t *af, float v)
 {
@@ -19,12 +19,15 @@ float thrust_model_clamp_voltage(const airframe_params_t *af, float v)
 
 float thrust_model_max_g(const airframe_params_t *af, float battery_v)
 {
-    return af->thrust_k_g_per_vduty * thrust_model_clamp_voltage(af, battery_v);
+    /* デューティ上限（duty_max）まで回したときの推力。ミキサーはこれを上限として配分するので、
+     * 姿勢の指令を優先する既存の処理が上限の内側で働く（あとでモーターごとに切り捨てない） */
+    return af->thrust_k_g_per_vduty * thrust_model_clamp_voltage(af, battery_v) * af->duty_max;
 }
 
 float thrust_model_to_duty(const airframe_params_t *af, float thrust_g, float battery_v)
 {
     if (!isfinite(thrust_g) || thrust_g <= 0.0f) return 0.0f;
-    float d = thrust_g / thrust_model_max_g(af, battery_v);
-    return d > 1.0f ? 1.0f : d;
+    /* max_g は K×V×duty_max なので、÷K×V のデューティは max_g の分だけ割って duty_max を掛ける */
+    float d = thrust_g / (af->thrust_k_g_per_vduty * thrust_model_clamp_voltage(af, battery_v));
+    return d > af->duty_max ? af->duty_max : d;
 }

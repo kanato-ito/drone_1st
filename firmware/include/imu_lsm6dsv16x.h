@@ -10,6 +10,8 @@
  *     機体の軸への並べ替えは src/imu_mount.c が共通コードで行う）。
  *   - imu_sample_period_s: 本物と同じサンプル間隔 [s]（1/ODR。姿勢推定のdtに使う）。
  *   - imu_int1_pin_is_high: 単に false を返してもよい。
+ *   - imu_config_check_next: 設定レジスタが無いので常に IMU_OK でよい（試験の偽物は結果を設定できる）。
+ *   - imu_config_rewrite: 常に IMU_OK でよい（試験の偽物は成功したら「直った」ことにする）。
  *
  * - すべてコア0で使う。SDK非依存（SPI/GPIOは .c の中に隠す）。
  * - INT1(GP26, 立ち上がり)の割り込み登録はコア0で行うこと。
@@ -110,6 +112,23 @@ imu_status_t imu_whoami_check(void);
  * 一致判定は呼び出し側で (value ^ expected) & mask を見る。
  */
 uint8_t imu_config_readback(imu_reg_readback_t *out, uint8_t max_entries);
+
+/**
+ * 設定レジスタを1周期に1本ずつ読み戻して調べる（読み戻しの表を順番に回る。WHO_AM_I も含み、飛ばさない）。
+ * (value ^ expected) & mask が0でなければ、同じレジスタをもう一度読む（SPIの1回きりの化けを弾く）。
+ * まだ違えば IMU_ERR_CONFIG（進めないので次の呼び出しでも同じレジスタを調べる）。SPI失敗は IMU_ERR_SPI。
+ * 一致なら IMU_OK で次の行へ進む。1バイト読みが1〜2回（7.5MHzで数µs）。
+ * 呼ぶコア: コア0。頻度: 1周期に1回、imu_read_fifo の直後。モーターが回っていても呼んでよい。
+ */
+imu_status_t imu_config_check_next(void);
+
+/**
+ * 設定レジスタを imu_init と同じ順で全部書き直し（ソフトリセットとINT1の割り込み再登録はしない）、
+ * FIFOを空にしてから、全レジスタを読み戻して確認する。IMU_OK / IMU_ERR_CONFIG / IMU_ERR_SPI。
+ * 呼ぶコア: コア0。頻度: 設定の不一致を見つけたときだけ。モーターが止まっているときだけ呼ぶこと
+ * （数百µsかかり、FIFOの中身を捨てるため）。
+ */
+imu_status_t imu_config_rewrite(void);
 
 /** 実際に設定されたSPIクロック [Hz]（spi_init()の戻り値）。ログ・試験用。コア0、随時。 */
 uint32_t imu_spi_actual_baud_hz(void);

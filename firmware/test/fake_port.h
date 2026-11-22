@@ -36,6 +36,10 @@ extern uint32_t fake_imu_int1_count;
 extern int      fake_imu_wait_calls;
 extern int      fake_imu_read_calls;
 extern int      fake_imu_read_samples; /**< imu_read_fifo が返すサンプル数（既定8、0〜16）。words_read は 2倍 */
+extern imu_status_t fake_imu_cfg_result;     /**< imu_config_check_next が返す値（既定 IMU_OK）。rewrite が成功すると IMU_OK に戻る */
+extern imu_status_t fake_imu_rewrite_result; /**< imu_config_rewrite が返す値（既定 IMU_OK）。IMU_OK を返したとき fake_imu_cfg_result を IMU_OK にする */
+extern int      fake_imu_cfg_calls;          /**< imu_config_check_next の呼び出し回数 */
+extern int      fake_imu_rewrite_calls;      /**< imu_config_rewrite の呼び出し回数 */
 
 /** 偽物の状態を全部初期値に戻す（各試験の最初に呼ぶ）。時刻は 1,000,000µs から始める。 */
 void fake_port_reset(void);

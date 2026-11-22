@@ -616,6 +616,7 @@ static struct {
     bool ok;
     uint32_t cost_us;
     int calls, resets;
+    controller_input_t last_in; /* 最後に受けた入力（角速度の確認用） */
 } FP;
 
 static void fp_reset(void *self) { (void)self; FP.resets++; }
@@ -623,6 +624,7 @@ static bool fp_step(void *self, const controller_input_t *in, float dt, controll
 {
     (void)self; (void)dt;
     FP.calls++;
+    FP.last_in = *in;
     fake_now_us += FP.cost_us;
     if (FP.follow) { out->thrust_g = in->target_thrust_g + 1.0f; out->torque_g[0] = out->torque_g[1] = out->torque_g[2] = 0.0f; }
     else *out = FP.out;
@@ -778,10 +780,9 @@ static void test_loop_int1_stuck_latch(void)
     /* ピンがHighのまま、読むと0個。8周期で張り付きをラッチ → IMU途絶の非常停止、読み直しも止まる */
     to_standby();
     fake_imu_pin_high = true; fake_imu_read_samples = 0;
-    int n = 0;
     for (int i = 0; i < (int)FC_LOOP_INT1_STUCK_LIMIT - 1; i++) {
         imu_int1_event_t ev = { ++fake_imu_int1_count, fake_now_us };
-        bool pend = control_loop_run_once(&L, &ev); steps++; n++;
+        bool pend = control_loop_run_once(&L, &ev); steps++;
         CHECK(pend); CHECK(!L.int1_stuck);
     }
     imu_int1_event_t ev = { ++fake_imu_int1_count, fake_now_us };
@@ -906,6 +907,169 @@ static void test_loop_no_sample_limit(void)
     end_checks();
 }
 
+/* ---------------- IMU設定の定期確認とジャイロLPF（提案） ---------------- */
+
+static bool motors_all_zero(void)
+{
+    for (int i = 0; i < FC_NUM_MOTORS; i++) if (fake_pwm_duty[i] != 0.0f) return false;
+    return true;
+}
+
+static void test_loop_imu_cfg_check_calls(void)
+{
+    /* 読めてサンプルがある周期ごとに1回だけ呼ぶ。読み出し失敗・INT1なしの周期は呼ばない */
+    to_standby();
+    run(100);
+    CHECK(fake_imu_read_calls > 0);
+    CHECK(fake_imu_cfg_calls == fake_imu_read_calls);
+    CHECK(L.stats.cfg_mismatch == 0 && L.stats.cfg_rewrites == 0 && !L.imu_cfg_fault);
+    int reads = fake_imu_read_calls, cfgs = fake_imu_cfg_calls;
+    fake_imu_read_result = IMU_ERR_SPI;
+    run(2);                                             /* 連続3回未満の失敗は途絶にならない */
+    CHECK(fake_imu_read_calls == reads + 2);
+    CHECK(fake_imu_cfg_calls == cfgs);
+    fake_imu_read_result = IMU_OK;
+    run(10);
+    CHECK(fake_imu_cfg_calls == fake_imu_read_calls - 2);
+    /* check_next の SPI失敗は無視（旗を立てず、数えない） */
+    fake_imu_cfg_result = IMU_ERR_SPI;
+    run(20);
+    CHECK(!L.imu_cfg_fault && L.stats.cfg_mismatch == 0 && fake_imu_rewrite_calls == 0);
+    CHECK(L.fsm.state == FS_STANDBY);
+    end_checks();
+    /* INT1が来ない周期（IMU途絶）は読まない＝呼ばない */
+    cfgs = fake_imu_cfg_calls;
+    fake_imu_wait_timeout = true;
+    run(3);
+    CHECK(fake_imu_cfg_calls == cfgs);
+}
+
+static void test_loop_imu_cfg_flight_estop(void)
+{
+    /* 飛行中に不一致 → 非常停止（理由 imu_config）。モーターは止まる。書き直しは飛行中はしない */
+    to_flight(0.3f);
+    run(20);
+    CHECK(L.fsm.state == FS_FLIGHT && L.motors_on);
+    fake_imu_cfg_result = IMU_ERR_CONFIG;
+    fake_imu_rewrite_result = IMU_ERR_CONFIG;           /* 非常停止後に書き直しても直らない場合 */
+    CHECK(RUN_UNTIL(L.fsm.state == FS_EMERGENCY_STOP, 5) == 1);
+    CHECK(L.fsm.estop_reason == ESTOP_IMU_CONFIG);
+    CHECK(!L.motors_on && motors_all_zero());
+    CHECK(L.stats.cfg_mismatch == 1);
+    CHECK(fake_imu_rewrite_calls == 0);                 /* 飛行の周期の頭の状態はモーター許可 */
+    CHECK(L.log.estop_reason == ESTOP_IMU_CONFIG);
+    run(100);
+    CHECK(L.fsm.state == FS_EMERGENCY_STOP);            /* 抜けない */
+    CHECK(motors_all_zero());
+    end_checks();
+
+    /* 降下中も同じ */
+    to_flight(0.3f);
+    pc_sending = false;
+    CHECK(RUN_UNTIL(L.fsm.state == FS_EMERGENCY_DESCENT, 800) > 0);
+    fake_imu_cfg_result = IMU_ERR_CONFIG;
+    CHECK(RUN_UNTIL(L.fsm.state == FS_EMERGENCY_STOP, 5) == 1);
+    CHECK(L.fsm.estop_reason == ESTOP_IMU_CONFIG && L.fsm.descent_reason == DESCENT_COMM_LOST);
+    CHECK(motors_all_zero());
+    end_checks();
+}
+
+static void test_loop_imu_cfg_standby_rewrite(void)
+{
+    /* 待機中の不一致 → 書き直して直る。非常停止にならない */
+    to_ready();
+    fake_imu_cfg_result = IMU_ERR_CONFIG;
+    run(1);
+    CHECK(L.stats.cfg_mismatch == 1 && L.stats.cfg_rewrites == 1);
+    CHECK(fake_imu_rewrite_calls == 1);
+    CHECK(!L.imu_cfg_fault);                            /* 同じ周期で直る */
+    CHECK(fake_imu_cfg_result == IMU_OK);               /* 偽物: 書き直しで直った */
+    run(100);
+    CHECK(L.fsm.state == FS_STANDBY);
+    CHECK(fake_imu_rewrite_calls == 1 && L.stats.cfg_mismatch == 1);
+
+    /* 書き直しが失敗している間はアームを止める。直ったら（旗を押し直せば）アームできる */
+    fake_imu_cfg_result = IMU_ERR_CONFIG;
+    fake_imu_rewrite_result = IMU_ERR_CONFIG;
+    run(3);
+    CHECK(L.imu_cfg_fault);
+    pkt.throttle = 0.0f; pkt.flags = 0; run(3);
+    pkt.flags = CTRL_FLAG_ARM_REQ; run(10);
+    CHECK(L.fsm.state == FS_STANDBY);                   /* 辺は来たが、アーム条件を満たさない */
+    fake_imu_rewrite_result = IMU_OK;
+    run(2);
+    CHECK(!L.imu_cfg_fault);
+    CHECK(L.fsm.state == FS_STANDBY);                   /* 旗は押したまま。辺は消費済みなので飛ばない */
+    pkt.flags = 0; run(3);
+    pkt.flags = CTRL_FLAG_ARM_REQ; run(3);
+    CHECK(L.fsm.state == FS_FLIGHT);
+    CHECK(L.fsm.estop_reason == ESTOP_NONE);
+    end_checks();
+}
+
+static void test_loop_imu_cfg_persistent_failure(void)
+{
+    /* 書き直しが毎回失敗 → 旗は残り、アームは止まったまま。非常停止にはしない。1周期に最大1回 */
+    to_ready();
+    fake_imu_cfg_result = IMU_ERR_CONFIG;
+    fake_imu_rewrite_result = IMU_ERR_CONFIG;           /* この偽物は失敗では cfg_result を直さない */
+    int steps0 = steps;
+    run(200);
+    CHECK(L.imu_cfg_fault);
+    CHECK(L.fsm.state == FS_STANDBY);
+    CHECK(fake_imu_rewrite_calls == 200);
+    CHECK(fake_imu_rewrite_calls <= steps - steps0);
+    CHECK(L.stats.cfg_rewrites == 200 && L.stats.cfg_mismatch == 200);
+    pkt.throttle = 0.0f; pkt.flags = 0; run(3);
+    pkt.flags = CTRL_FLAG_ARM_REQ; run(50);
+    CHECK(L.fsm.state == FS_STANDBY);
+    CHECK(!L.motors_on && motors_all_zero());
+    /* 通信待機でも同じように書き直しを続け、非常停止にならない */
+    pc_sending = false;
+    run(800);
+    CHECK(L.fsm.state == FS_WAIT_COMM);
+    CHECK(L.imu_cfg_fault && fake_imu_rewrite_calls > 200);
+    /* 直れば旗が下りる */
+    fake_imu_rewrite_result = IMU_OK;
+    run(2);
+    CHECK(!L.imu_cfg_fault);
+    end_checks();
+}
+
+static void test_loop_gyro_lpf_input(void)
+{
+    /* LPFなし（遮断0）: 制御器の入力の角速度は、これまでどおり姿勢の角速度（バッチ平均-バイアス） */
+    policy_flight();
+    CHECK(L.fsm.state == FS_FLIGHT && L.active_controller == CONTROLLER_POLICY);
+    gyro_filter_init(&L.gyro_lpf, 0.0f, 7519.0f);
+    fake_imu_set_body_gyro(1.0f, -0.5f, 0.25f);
+    run(5);
+    CHECK(L.fsm.state == FS_FLIGHT);
+    CHECK(FP.calls > 0);
+    CHECK_NEAR(FP.last_in.rate_rps.x, L.att.out.rate_rps.x, 1e-5f);
+    CHECK_NEAR(FP.last_in.rate_rps.y, L.att.out.rate_rps.y, 1e-5f);
+    CHECK_NEAR(FP.last_in.rate_rps.z, L.att.out.rate_rps.z, 1e-5f);
+    CHECK_NEAR(FP.last_in.rate_rps.x, 1.0f - L.att.bias_rps.x, 1e-4f);
+    end_checks();
+
+    /* 既定（80Hz）: 角速度が急に変わった周期は、生の値よりずっと小さい。定常ではバイアスを引いた値に一致。
+     * ログ・姿勢の角速度は生のまま */
+    policy_flight();
+    CHECK_NEAR(L.params->gyro_filter.cutoff_hz, 80.0f, 0.0f);
+    fake_imu_set_body_gyro(0.0f, 0.0f, 0.0f);
+    run(20);                                            /* フィルタを0に落ち着かせる */
+    fake_imu_set_body_gyro(1.0f, 0.0f, 0.0f);
+    run(1);
+    CHECK(L.att.out.rate_rps.x > 0.9f);                 /* 姿勢（と見張り役・ログ）は生の平均 */
+    CHECK_NEAR(L.log.rate[0], L.att.out.rate_rps.x, 1e-6f);
+    CHECK(FP.last_in.rate_rps.x < 0.4f);                /* 8サンプルぶんではまだ約1割しか立ち上がらない */
+    CHECK(FP.last_in.rate_rps.x > -0.1f);
+    run(300);
+    CHECK_NEAR(FP.last_in.rate_rps.x, L.att.out.rate_rps.x, 2e-3f);   /* 定常: 直流利得1 */
+    CHECK(L.fsm.state == FS_FLIGHT);
+    end_checks();
+}
+
 const test_t g_tests_loop[] = {
     { "loop: 起動（PWM0→初期化→WDT開始、既定は本番の値）", test_loop_init_ok },
     { "loop: 飛行中でもスロットル0付近では回さない（提案）", test_loop_idle_throttle },
@@ -931,5 +1095,10 @@ const test_t g_tests_loop[] = {
     { "loop: 飛行中の読み出し失敗1回は指令を保つ", test_loop_hold_read_error },
     { "loop: 張り付き後はビジー回りしない（step経由）", test_loop_stuck_no_busy_spin },
     { "loop: サンプル0個が続いたらIMU途絶（提案）", test_loop_no_sample_limit },
+    { "loop: IMU設定の確認は読めた周期に1回（提案）", test_loop_imu_cfg_check_calls },
+    { "loop: 飛行中・降下中のIMU設定不一致は非常停止（提案）", test_loop_imu_cfg_flight_estop },
+    { "loop: 待機中のIMU設定不一致は書き直して復帰（提案）", test_loop_imu_cfg_standby_rewrite },
+    { "loop: 書き直しが続けて失敗してもアームを止めるだけ（提案）", test_loop_imu_cfg_persistent_failure },
+    { "loop: 角速度ループの入力だけジャイロLPF（提案）", test_loop_gyro_lpf_input },
 };
 const int g_tests_loop_n = (int)(sizeof(g_tests_loop) / sizeof(g_tests_loop[0]));

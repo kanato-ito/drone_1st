@@ -7,8 +7,8 @@
  *   WAIT_COMM     : 非常停止旗 / IMU途絶 → ESTOP / 通信接続 → STANDBY
  *   STANDBY       : 非常停止旗 / IMU途絶 → ESTOP / 通信途絶 → WAIT_COMM(提案)
  *                   / アーム旗の0→1 かつ 水平・スロットル0 かつ ディスアーム要求なし → FLIGHT
- *   FLIGHT        : 非常停止旗 / IMU途絶 / 傾き過大 → ESTOP / ディスアーム → STANDBY / 通信途絶・電池低下 → DESCENT
- *   DESCENT       : 非常停止旗 / IMU途絶(提案) / 傾き過大(提案) → ESTOP / 着地 → ESTOP / 時間切れ → ESTOP
+ *   FLIGHT        : 非常停止旗 / IMU途絶 / IMU設定不一致(提案) / 傾き過大 → ESTOP / ディスアーム → STANDBY / 通信途絶・電池低下 → DESCENT
+ *   DESCENT       : 非常停止旗 / IMU途絶(提案) / IMU設定不一致(提案) / 傾き過大(提案) → ESTOP / 着地 → ESTOP / 時間切れ → ESTOP
  *   ESTOP         : 何があっても抜けない
  */
 #include <math.h>
@@ -79,6 +79,7 @@ bool flight_fsm_step(flight_fsm_t *f, const flight_fsm_inputs_t *in, float tilt_
 
     case FS_FLIGHT:
         if (in->imu_timeout) return go_estop(f, ESTOP_IMU_TIMEOUT, now_us);
+        if (in->imu_config_fault) return go_estop(f, ESTOP_IMU_CONFIG, now_us);
         if (tilt_bad) return go_estop(f, ESTOP_TILT_EXCEEDED, now_us);
         if (in->disarm_request) return go(f, FS_STANDBY, now_us);
         if (in->comm_lost) return go_descent(f, DESCENT_COMM_LOST, now_us);
@@ -89,6 +90,7 @@ bool flight_fsm_step(flight_fsm_t *f, const flight_fsm_inputs_t *in, float tilt_
         /* 提案: 降下中もIMU途絶・傾き過大は非常停止（姿勢が分からない・戻せない機体を回し続けない）。
          * ディスアーム旗は降下中は無視する（機体が自分で降りる。止めたいときは非常停止旗） */
         if (in->imu_timeout) return go_estop(f, ESTOP_IMU_TIMEOUT, now_us);
+        if (in->imu_config_fault) return go_estop(f, ESTOP_IMU_CONFIG, now_us);
         if (tilt_bad) return go_estop(f, ESTOP_TILT_EXCEEDED, now_us);
         if (in->landed) return go_estop(f, ESTOP_DESCENT_LANDED, now_us);
         if (in->descent_timeout) return go_estop(f, ESTOP_DESCENT_TIMEOUT, now_us);
@@ -130,6 +132,7 @@ const char *estop_reason_name(estop_reason_t r)
     case ESTOP_DESCENT_LANDED:  return "landed";
     case ESTOP_DESCENT_TIMEOUT: return "descent_timeout";
     case ESTOP_INTERNAL_ERROR:  return "internal_error";
+    case ESTOP_IMU_CONFIG:      return "imu_config";
     default:                    return "?";
     }
 }

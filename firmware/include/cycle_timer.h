@@ -27,7 +27,7 @@ typedef struct {
     uint32_t cycle_index;      /**< 周期番号（cycle_timing_begin のたびに+1。ゼロ初期化から始めると最初の周期は1） */
     uint32_t start_us;         /**< 周期の開始時刻 = INT1の立ち上がり時刻（下位32bit） */
     uint16_t wake_latency_us;  /**< INT1から処理開始までの遅れ */
-    uint16_t proc_us;          /**< 処理開始〜PWM更新完了（1.04msに収まるかの確認用） */
+    uint16_t proc_us;          /**< 処理開始〜PWM更新完了（1周期＝約1.064msに収まるかの確認用。INT1実測約940Hz、ファームの判定は LOOP_BUDGET_US=1064） */
     uint16_t int1_missed;      /**< この周期までに取りこぼしたINT1の数（回数差-1） */
     uint32_t t_begin_us;       /**< 処理開始時刻（内部用） */
 } cycle_timing_t;

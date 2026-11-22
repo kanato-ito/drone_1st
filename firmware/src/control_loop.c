@@ -3,8 +3,10 @@
  * @brief コア0の制御ループ本体（control_loop.h）。純粋C11。SDKには触れず、ポートのヘッダ越しにだけ呼ぶ。
  *
  * 1周期の順序（docs/architecture.md「1周期の流れ」。ステップ④で入る部分は TODO(④)）:
- *   timing開始 → imu_read_fifo → imu_mount_apply → 姿勢 → 電池(数周期に1回) → mailbox / ipc_flags
- *   → （降下中なら着地判定）→ 状態機械 → 制御器の選択と実行（PIDは常に影として） → 見張り役
+ *   timing開始 → imu_read_fifo → imu_config_check_next（設定レジスタを1本、提案）→ imu_mount_apply
+ *   → ジャイロLPF（角速度ループ用。姿勢には生の値、提案）→ 姿勢 → 電池(数周期に1回) → mailbox / ipc_flags
+ *   → （降下中なら着地判定）→ （IMU設定の不一致があり、モーター停止中なら imu_config_rewrite、提案）
+ *   → 状態機械 → 制御器の選択と実行（PIDは常に影として。入力の角速度はLPF後） → 見張り役
  *   → thrust_model + mixer → motor_pwm_set / motor_pwm_stop → timing終了 → ログ組み立て
  *   → TODO(④) ログをキューへ → fc_wdt_feed → INT1ピンの確認
  */
@@ -14,6 +16,7 @@
 #include "imu_mount.h"
 #include "thrust_model.h"
 #include "motor_pwm.h"
+#include "gyro_filter.h"
 
 #define LOOP_BUDGET_US 1064u   /* 1周期（IMUの実周期）。超過回数の統計用 */
 
@@ -59,6 +62,8 @@ void control_loop_init(control_loop_t *c, const params_t *params)
     c->wdt_reboot = fc_wdt_caused_reboot();
     c->dt_sample = imu_sample_period_s();
     c->fifo_wtm_words = cfg.fifo_watermark_words;
+    /* ジャイロLPF: サンプル周波数は IMU の実測ODR（1/dt_sample）。dt が不正なら素通し */
+    gyro_filter_init(&c->gyro_lpf, params->gyro_filter.cutoff_hz, (c->dt_sample > 0.0f) ? (1.0f / c->dt_sample) : 0.0f);
 
     attitude_init(&c->att, &params->attitude);
     controller_pid_init(&c->pid, &params->pid);
@@ -200,7 +205,16 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev)
             }
             if (c->batch.fifo_overrun) c->stats.overruns++;
             if (c->batch.truncated) c->stats.truncs++;
+            /* 提案: 設定レジスタを1本だけ読み戻して調べる（1周期1本、全部で12周期ほどで一巡）。
+             * 不一致（2回読んでも違う）は故障の旗を立てる。旗は rewrite が成功するまで残す。
+             * SPI失敗は読み出し失敗として別に数えているので、ここでは無視する */
+            if (imu_config_check_next() == IMU_ERR_CONFIG) {
+                c->imu_cfg_fault = true;
+                c->stats.cfg_mismatch++;
+            }
             imu_mount_apply(&p->imu_mount, &c->batch);   /* 基板の軸 → 機体の軸 */
+            /* 角速度ループ用のローパス。軸が機体の軸になったあと。姿勢推定には生のバッチを渡す（変えない） */
+            gyro_filter_apply_batch(&c->gyro_lpf, &c->batch);
             attitude_update_batch(&c->att, &c->batch, c->dt_sample);
         } else {
             c->batch.count = 0;
@@ -266,6 +280,17 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev)
         descent_update(&c->descent, &p->descent, as, now, &c->desc_tgt);
     }
 
+    /* ---- IMU設定の書き直し（提案）----
+     * 不一致の旗が立っていて、この周期の頭の状態がモーターを回さない状態（BOOT/WAIT_COMM/STANDBY/ESTOP）のときだけ。
+     * 書き直しはFIFOを捨てるので、飛行中・降下中はしない（飛行中は状態機械が非常停止にする）。1周期に最大1回。
+     * 成功（書き直して全部読み戻して一致）で旗を下ろす。失敗なら旗を残し、次の周期にまた試す */
+    if (c->imu_cfg_fault && !flight_fsm_motors_allowed(prev_state)) {
+        c->stats.cfg_rewrites++;
+        if (imu_config_rewrite() == IMU_OK) {
+            c->imu_cfg_fault = false;
+        }
+    }
+
     /* ---- 状態機械 ---- */
     flight_fsm_inputs_t in;
     memset(&in, 0, sizeof(in));
@@ -274,12 +299,14 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev)
     /* 提案: INT1張り付きの専用の理由は作らず IMU途絶 に含める */
     in.imu_timeout = (ev == NULL) || (c->imu_fail_count >= FC_LOOP_IMU_FAIL_LIMIT) || c->int1_stuck ||
                      (c->no_sample_count >= FC_LOOP_NO_SAMPLE_LIMIT);
+    in.imu_config_fault = c->imu_cfg_fault;
     in.comm_connected = comm_connected;
     in.comm_lost = comm_lost;
     in.arm_rising_edge = arm_edge;
     /* 提案: アーム条件に「gyro バイアスが求まっている」「電池が低下していない」を足す
-     * （固定するバイアスが未推定のまま飛ばない／アームした途端に降下に入らない） */
-    in.level_and_zero_throttle = as->valid && attitude_bias_ready(&c->att) && !battery_low &&
+     * （固定するバイアスが未推定のまま飛ばない／アームした途端に降下に入らない）。
+     * 提案: IMUの設定が不一致のままなら（書き直しが済むまで）アームさせない */
+    in.level_and_zero_throttle = as->valid && attitude_bias_ready(&c->att) && !battery_low && !c->imu_cfg_fault &&
         (tilt <= p->safety.arm_level_tol_rad) &&
         (finite_or_zero(c->target.throttle) <= p->safety.arm_throttle_tol);
     in.disarm_request = disarm_req;
@@ -327,8 +354,17 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev)
         }
 
         if (!hold) {
+            /* 制御器の入力の角速度だけ、ローパス後の値からバイアスを引いたものにする。
+             * 姿勢の角度・ガード・着地検出・ログは生の姿勢状態 as のまま。
+             * PIDも方策も同じ入力を受ける（方策にフィルタ後の角速度を使うかは強化学習の設計で決める。提案） */
+            /* フィルタ無し（cutoff 0）のときは、今まで通り姿勢推定の角速度（バッチ平均−バイアス）を使う */
+            attitude_state_t as_ctl = *as;
+            if (c->gyro_lpf.enabled) {
+                const vec3f_t lpf = gyro_filter_output(&c->gyro_lpf);
+                as_ctl.rate_rps = (vec3f_t){ lpf.x - c->att.bias_rps.x, lpf.y - c->att.bias_rps.y, lpf.z - c->att.bias_rps.z };
+            }
             controller_input_t cin;
-            controller_input_make(as, &c->target_att, c->target_thrust_g, &c->prev_output, &cin);
+            controller_input_make(&as_ctl, &c->target_att, c->target_thrust_g, &c->prev_output, &cin);
 
             /* PIDは毎周期回す: 降下中は本番、方策使用中は影（取り上げ時の積分が冷えない。architecture.md #13） */
             controller_output_t pid_out;
@@ -364,7 +400,7 @@ bool control_loop_run_once(control_loop_t *c, const imu_int1_event_t *ev)
                 }
                 /* take のときは c->out は影PIDの出力のまま（この周期から差し替え） */
             }
-            c->prev_output = c->out;   /* 前回出力は実際に指令した値 */
+            c->prev_output = c->out;   /* 前回出力は制御器が出した値（ミキサーの上限処理の前）。上限処理後にするかは強化学習の設計で決める（2026-11-22） */
             if (st == FS_FLIGHT) descent_track_hover(&c->descent, c->out.thrust_g);
         }   /* !hold。hold のときは c->out（= prev_output）をそのままミキサーへ */
 

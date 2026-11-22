@@ -11,6 +11,7 @@
 | `firmware/src/flight_state.c` | 状態6つの遷移（入力の構造体 → 次の状態。純粋関数）、非常停止のラッチ、理由の記録 |
 | `firmware/src/guard.c` | PIDの見張り役。取り上げの判定とラッチ |
 | `firmware/src/emergency_descent.c` | 降下の目標推力・目標姿勢、着地検出、時間切れ |
+| `firmware/src/gyro_filter.c` | 角速度ループ用のジャイロのローパス（2次バターワース80Hz、2026-11-22追加） |
 | `firmware/src/control_loop.c` | 1周期の流れ（純粋C。SDKには触れず、ポートのヘッダ越しにだけ呼ぶ）、実機のループ |
 | `firmware/src/port_pico/clock_wdt_pico.c` | WDTの本実装（`watchdog_enable` / `watchdog_update` / `watchdog_enable_caused_reboot`） |
 | `firmware/src/params.c` | 安全系しきい値の検査を追加（`params_validate`） |
@@ -44,11 +45,13 @@
 | STANDBY | 通信途絶（**提案**、architecture #20） | WAIT_COMM |
 | STANDBY | アーム旗の0→1 かつ 水平・スロットル0 かつ ディスアーム要求なし（**提案**） | FLIGHT |
 | FLIGHT | IMU途絶 | ESTOP（imu_timeout） |
+| FLIGHT | IMU設定の不一致（2026-11-22、architecture #26） | ESTOP（imu_config） |
 | FLIGHT | 傾き > 60°（NaNも） | ESTOP（tilt_exceeded） |
 | FLIGHT | ディスアーム | STANDBY |
 | FLIGHT | 通信途絶 | DESCENT（comm_lost） |
 | FLIGHT | 電池低下 | DESCENT（battery_low） |
 | DESCENT | IMU途絶（**提案**） | ESTOP（imu_timeout） |
+| DESCENT | IMU設定の不一致（2026-11-22） | ESTOP（imu_config） |
 | DESCENT | 傾き > 60°（**提案**） | ESTOP（tilt_exceeded） |
 | DESCENT | 着地検出 | ESTOP（landed） |
 | DESCENT | 時間切れ | ESTOP（descent_timeout） |

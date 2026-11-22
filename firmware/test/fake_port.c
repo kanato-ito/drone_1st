@@ -65,6 +65,8 @@ bool     fake_imu_wait_timeout, fake_imu_pin_high;
 uint32_t fake_imu_period_us, fake_imu_read_cost_us, fake_imu_int1_count;
 int      fake_imu_wait_calls, fake_imu_read_calls;
 int      fake_imu_read_samples;
+imu_status_t fake_imu_cfg_result, fake_imu_rewrite_result;
+int      fake_imu_cfg_calls, fake_imu_rewrite_calls;
 
 imu_config_t imu_config_default(void)
 {
@@ -88,6 +90,19 @@ bool imu_wait_int1(uint32_t timeout_us, imu_int1_event_t *ev)
     ev->count = fake_imu_int1_count;
     ev->timestamp_us = fake_now_us;
     return true;
+}
+
+imu_status_t imu_config_check_next(void)
+{
+    fake_imu_cfg_calls++;
+    return fake_imu_cfg_result;
+}
+
+imu_status_t imu_config_rewrite(void)
+{
+    fake_imu_rewrite_calls++;
+    if (fake_imu_rewrite_result == IMU_OK) fake_imu_cfg_result = IMU_OK;   /* 書き直して直った */
+    return fake_imu_rewrite_result;
 }
 
 imu_status_t imu_read_fifo(imu_batch_t *out)
@@ -125,6 +140,9 @@ void fake_port_reset(void)
     fake_imu_int1_count = 0;
     fake_imu_wait_calls = fake_imu_read_calls = 0;
     fake_imu_read_samples = 8;
+    fake_imu_cfg_result = IMU_OK;
+    fake_imu_rewrite_result = IMU_OK;
+    fake_imu_cfg_calls = fake_imu_rewrite_calls = 0;
 }
 
 /* 機体 = (基板y, -基板x, 基板z) なので、基板 = (-機体y, 機体x, 機体z) */

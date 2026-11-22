@@ -26,8 +26,8 @@ extern "C" {
 typedef struct {
     float    roll;      /**< 目標ロール [rad]（owner版 Drone.roll と同じ名前） */
     float    pitch;     /**< 目標ピッチ [rad] */
-    float    yaw;       /**< 目標ヨー [rad]（角度か角速度かは未決） */
-    float    throttle;  /**< スロットル 0..1（owner版と同じ名前。N への換算は params） */
+    float    yaw;       /**< 目標ヨー角 [rad]（PC側の絶対値。機体はアーム時を基準にした差で使う。ヨーも角度→角速度の2段） */
+    float    throttle;  /**< スロットル 0..1（owner版と同じ名前。推力[g]への換算は params の throttle_full_thrust_g） */
     uint32_t flags;     /**< CTRL_FLAG_* */
     uint32_t packet_seq;/**< 送信側の通し番号（欠落の統計用。メールボックスのseqとは別物） */
 } control_packet_t;

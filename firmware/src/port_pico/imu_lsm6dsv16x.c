@@ -153,6 +153,9 @@ static float s_accel_g_per_lsb  = 0.0f;
 static uint8_t s_ctrl6_value = 0;
 static uint8_t s_ctrl8_value = 0;
 
+/* imu_config_check_next が次に調べる表の行（ラウンドロビン） */
+static uint8_t s_check_idx = 0;
+
 /* ジャイロと加速度が別々のワードで来るので、片方だけ届いた状態を呼び出しをまたいで持つ */
 static bool     s_have_gyro = false, s_have_accel = false;
 static vec3f_t  s_pend_gyro_rps, s_pend_accel_g;
@@ -235,11 +238,10 @@ static bool select_accel_fs(uint8_t g, uint8_t *code, float *mg_per_lsb)
 /* 設定の読み戻し                                                          */
 /* ====================================================================== */
 
-uint8_t imu_config_readback(imu_reg_readback_t *out, uint8_t max_entries)
+/** 設定レジスタの表（アドレス・あるべき値・比較ビット）を t[] に作り、行数を返す。value は0。
+ *  imu_config_readback / imu_config_check_next / verify_config が同じ表を使う。 */
+static uint8_t fill_config_table(imu_reg_readback_t t[IMU_READBACK_MAX])
 {
-    if (!s_spi_ready || out == NULL) {
-        return 0;
-    }
     const imu_reg_readback_t table[] = {
         { "WHO_AM_I",   REG_WHO_AM_I,   0, WHO_AM_I_VALUE, 0xFF },
         { "CTRL1(XL)",  REG_CTRL1,      0, (uint8_t)((OP_MODE_HIGH_PERF << 4) | ODR_7680HZ), 0xFF },
@@ -256,6 +258,19 @@ uint8_t imu_config_readback(imu_reg_readback_t *out, uint8_t max_entries)
     };
     const uint8_t n_table = (uint8_t)(sizeof(table) / sizeof(table[0]));
     _Static_assert(sizeof(table) / sizeof(table[0]) <= IMU_READBACK_MAX, "IMU_READBACK_MAX が足りない");
+    for (uint8_t i = 0; i < n_table; i++) {
+        t[i] = table[i];
+    }
+    return n_table;
+}
+
+uint8_t imu_config_readback(imu_reg_readback_t *out, uint8_t max_entries)
+{
+    if (!s_spi_ready || out == NULL) {
+        return 0;
+    }
+    imu_reg_readback_t table[IMU_READBACK_MAX];
+    const uint8_t n_table = fill_config_table(table);
 
     uint8_t n = 0;
     for (uint8_t i = 0; i < n_table && n < max_entries; i++) {
@@ -280,6 +295,36 @@ static imu_status_t verify_config(void)
             return IMU_ERR_CONFIG;
         }
     }
+    return IMU_OK;
+}
+
+imu_status_t imu_config_check_next(void)
+{
+    if (!s_spi_ready) {
+        return IMU_ERR_SPI;
+    }
+    imu_reg_readback_t table[IMU_READBACK_MAX];
+    const uint8_t n = fill_config_table(table);
+    if (s_check_idx >= n) {
+        s_check_idx = 0;
+    }
+    const imu_reg_readback_t *e = &table[s_check_idx];
+
+    uint8_t v = 0;
+    if (reg_read1(e->addr, &v) != IMU_OK) {
+        return IMU_ERR_SPI;
+    }
+    if (((v ^ e->expected) & e->mask) != 0) {
+        /* SPIの1回きりの化けを弾くため、同じレジスタをもう一度読む。まだ違えば本物の不一致。
+         * 進めない（次の呼び出しでも同じレジスタを調べる） */
+        if (reg_read1(e->addr, &v) != IMU_OK) {
+            return IMU_ERR_SPI;
+        }
+        if (((v ^ e->expected) & e->mask) != 0) {
+            return IMU_ERR_CONFIG;
+        }
+    }
+    s_check_idx = (uint8_t)((s_check_idx + 1u) % n);
     return IMU_OK;
 }
 
@@ -375,6 +420,66 @@ imu_status_t imu_fifo_flush(void)
     return reg_write1(REG_FIFO_CTRL4, FIFO_MODE_STREAM);
 }
 
+/** INT1 (GP26): 入力・立ち上がりエッジ割り込み。コア0で登録する。 */
+static void register_int1_irq(void)
+{
+    /* プルダウン: 配線が外れていてもピンが浮かず、「INT1が来ない」がはっきり出る。
+     * IMU側は既定でプッシュプル・アクティブHigh（IF_CFG の既定）なのでプルダウンと喧嘩しない。 */
+    gpio_init(BOARD_IMU_INT1_GPIO);
+    gpio_set_dir(BOARD_IMU_INT1_GPIO, GPIO_IN);
+    gpio_pull_down(BOARD_IMU_INT1_GPIO);
+    s_int1_last_seen = s_int1_count;
+    /* ODRを入れる前に登録する: 入れた後だと最初の立ち上がりを逃し、ピンがHighのまま止まるおそれがあるため */
+    gpio_set_irq_enabled_with_callback(BOARD_IMU_INT1_GPIO, GPIO_IRQ_EDGE_RISE, true, &gpio_irq_cb);
+}
+
+/**
+ * 設定レジスタを全部書く（imu_init と imu_config_rewrite が共有）。ソフトリセットはしない。
+ * 順序: 設定（ODRを入れる前に全部）→ before_odr()（あれば）→ ODR。
+ * before_odr は imu_init が INT1 の登録を差し込むためのもの（imu_config_rewrite は NULL = 再登録しない）。
+ * s_cfg と s_ctrl6/8_value は呼ぶ前に決まっていること。
+ */
+static imu_status_t write_config_regs(void (*before_odr)(void))
+{
+    imu_status_t st;
+    /* リセット直後（imu_init）でも、設定が化けた後（imu_config_rewrite）でも同じになるよう、バイト丸ごと書く。 */
+    if ((st = reg_write1(REG_CTRL3, (uint8_t)(CTRL3_IF_INC | CTRL3_BDU))) != IMU_OK) return st;
+    if ((st = reg_write1(REG_CTRL6, s_ctrl6_value)) != IMU_OK) return st;
+    if ((st = reg_write1(REG_CTRL8, s_ctrl8_value)) != IMU_OK) return st;
+
+    if ((st = reg_write1(REG_FIFO_CTRL1, (uint8_t)s_cfg.fifo_watermark_words)) != IMU_OK) return st;
+    if ((st = reg_write1(REG_FIFO_CTRL2, 0x00)) != IMU_OK) return st;
+    if ((st = reg_write1(REG_FIFO_CTRL3, (uint8_t)((BDR_7680HZ << 4) | BDR_7680HZ))) != IMU_OK) return st;
+    if ((st = reg_write1(REG_FIFO_CTRL4, FIFO_MODE_STREAM)) != IMU_OK) return st;
+    if ((st = reg_write1(REG_INT1_CTRL, INT1_CTRL_FIFO_TH)) != IMU_OK) return st;
+
+    if (before_odr != NULL) {
+        before_odr();
+    }
+
+    /* ---- ODR を入れる（ここからFIFOに溜まり始める）---- */
+    if ((st = reg_write1(REG_CTRL1, (uint8_t)((OP_MODE_HIGH_PERF << 4) | ODR_7680HZ))) != IMU_OK) return st;
+    if ((st = reg_write1(REG_CTRL2, (uint8_t)((OP_MODE_HIGH_PERF << 4) | ODR_7680HZ))) != IMU_OK) return st;
+    return IMU_OK;
+}
+
+imu_status_t imu_config_rewrite(void)
+{
+    if (!s_spi_ready) {
+        return IMU_ERR_SPI;
+    }
+    /* ソフトリセットも INT1 の再登録もしない。書き直して、FIFOの古い中身を捨て、全部読み戻して確認する */
+    imu_status_t st = write_config_regs(NULL);
+    if (st != IMU_OK) {
+        return st;
+    }
+    if ((st = imu_fifo_flush()) != IMU_OK) {
+        return st;
+    }
+    s_check_idx = 0;
+    return verify_config();
+}
+
 imu_status_t imu_init(const imu_config_t *cfg)
 {
     s_cfg = (cfg != NULL) ? *cfg : imu_config_default();
@@ -387,6 +492,7 @@ imu_status_t imu_init(const imu_config_t *cfg)
         return IMU_ERR_CONFIG;
     }
     /* rad/s = LSB × mdps/LSB × 1e-3 × π/180 */
+    s_check_idx = 0;
     s_gyro_rps_per_lsb = gyro_mdps * 1.0e-3f * 0.017453292519943295f;
     s_accel_g_per_lsb  = accel_mg * 1.0e-3f;
 
@@ -431,31 +537,8 @@ imu_status_t imu_init(const imu_config_t *cfg)
         return IMU_ERR_CONFIG;
     }
 
-    /* ---- 設定（ODRを入れる前に全部済ませる）---- */
-    /* リセット直後なので、書かないビットは既定値（0）のままになる。バイト丸ごと書く。 */
-    if ((st = reg_write1(REG_CTRL3, (uint8_t)(CTRL3_IF_INC | CTRL3_BDU))) != IMU_OK) return st;
-    if ((st = reg_write1(REG_CTRL6, s_ctrl6_value)) != IMU_OK) return st;
-    if ((st = reg_write1(REG_CTRL8, s_ctrl8_value)) != IMU_OK) return st;
-
-    if ((st = reg_write1(REG_FIFO_CTRL1, (uint8_t)s_cfg.fifo_watermark_words)) != IMU_OK) return st;
-    if ((st = reg_write1(REG_FIFO_CTRL2, 0x00)) != IMU_OK) return st;
-    if ((st = reg_write1(REG_FIFO_CTRL3, (uint8_t)((BDR_7680HZ << 4) | BDR_7680HZ))) != IMU_OK) return st;
-    if ((st = reg_write1(REG_FIFO_CTRL4, FIFO_MODE_STREAM)) != IMU_OK) return st;
-    if ((st = reg_write1(REG_INT1_CTRL, INT1_CTRL_FIFO_TH)) != IMU_OK) return st;
-
-    /* ---- INT1 (GP26): 入力・立ち上がりエッジ割り込み。コア0で登録する ---- */
-    /* プルダウン: 配線が外れていてもピンが浮かず、「INT1が来ない」がはっきり出る。
-     * IMU側は既定でプッシュプル・アクティブHigh（IF_CFG の既定）なのでプルダウンと喧嘩しない。 */
-    gpio_init(BOARD_IMU_INT1_GPIO);
-    gpio_set_dir(BOARD_IMU_INT1_GPIO, GPIO_IN);
-    gpio_pull_down(BOARD_IMU_INT1_GPIO);
-    s_int1_last_seen = s_int1_count;
-    /* ODRを入れる前に登録する: 入れた後だと最初の立ち上がりを逃し、ピンがHighのまま止まるおそれがあるため */
-    gpio_set_irq_enabled_with_callback(BOARD_IMU_INT1_GPIO, GPIO_IRQ_EDGE_RISE, true, &gpio_irq_cb);
-
-    /* ---- ODR を入れる（ここからFIFOに溜まり始める）---- */
-    if ((st = reg_write1(REG_CTRL1, (uint8_t)((OP_MODE_HIGH_PERF << 4) | ODR_7680HZ))) != IMU_OK) return st;
-    if ((st = reg_write1(REG_CTRL2, (uint8_t)((OP_MODE_HIGH_PERF << 4) | ODR_7680HZ))) != IMU_OK) return st;
+    /* ---- 設定・INT1の登録・ODR（write_config_regs。ODRより前にINT1を登録する）---- */
+    if ((st = write_config_regs(register_int1_irq)) != IMU_OK) return st;
 
     /* ---- 読み戻して確認 ---- */
     return verify_config();

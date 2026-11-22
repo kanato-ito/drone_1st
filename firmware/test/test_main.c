@@ -447,19 +447,74 @@ static void test_thrust_model(void)
     /* 式: デューティ = 推力 ÷ (9.4 × 電圧) */
     CHECK_NEAR(thrust_model_to_duty(af, 20.0f, 3.8f), 20.0f / (9.4f * 3.8f), 1e-6f);
     CHECK_NEAR(thrust_model_to_duty(af, 20.0f, 4.2f), 20.0f / (9.4f * 4.2f), 1e-6f);
-    CHECK_NEAR(thrust_model_to_duty(af, 20.0f, 3.5f), 0.6079f, 1e-3f);
+    CHECK_NEAR(thrust_model_to_duty(af, 15.0f, 3.5f), 0.4559f, 1e-3f);
     /* 電圧が下がると同じ推力に大きいデューティが要る（補償） */
-    CHECK(thrust_model_to_duty(af, 20.0f, 3.5f) > thrust_model_to_duty(af, 20.0f, 4.2f));
-    /* 逆算: max の推力を出すデューティは 1.0 */
-    CHECK_NEAR(thrust_model_max_g(af, 4.2f), 9.4f * 4.2f, 1e-4f);
-    CHECK_NEAR(thrust_model_to_duty(af, thrust_model_max_g(af, 3.9f), 3.9f), 1.0f, 1e-5f);
-    /* 丸め */
-    CHECK_NEAR(thrust_model_to_duty(af, 1000.0f, 3.8f), 1.0f, 0.0f);
+    CHECK(thrust_model_to_duty(af, 15.0f, 3.5f) > thrust_model_to_duty(af, 15.0f, 4.2f));
+    /* 20g を 3.5V で出すには 0.608 要るが、上限 0.6 に切られる */
+    CHECK_NEAR(thrust_model_to_duty(af, 20.0f, 3.5f), 0.6f, 0.0f);
+    /* 逆算: max の推力を出すデューティは duty_max（既定 0.6） */
+    CHECK_NEAR(af->duty_max, 0.6f, 0.0f);
+    CHECK_NEAR(thrust_model_max_g(af, 4.2f), 9.4f * 4.2f * 0.6f, 1e-4f);
+    CHECK_NEAR(thrust_model_to_duty(af, thrust_model_max_g(af, 3.9f), 3.9f), 0.6f, 1e-5f);
+    /* 丸め: 上限は 1 ではなく duty_max */
+    CHECK_NEAR(thrust_model_to_duty(af, 1000.0f, 3.8f), 0.6f, 0.0f);
     CHECK_NEAR(thrust_model_to_duty(af, -5.0f, 3.8f), 0.0f, 0.0f);
     CHECK_NEAR(thrust_model_to_duty(af, NAN, 3.8f), 0.0f, 0.0f);
     /* 電圧が0・NaN でも割り算が暴れない（下限に丸める） */
-    CHECK_NEAR(thrust_model_to_duty(af, 20.0f, 0.0f), 20.0f / (9.4f * 3.0f), 1e-6f);
-    CHECK_NEAR(thrust_model_to_duty(af, 20.0f, NAN), 20.0f / (9.4f * 3.0f), 1e-6f);
+    CHECK_NEAR(thrust_model_to_duty(af, 15.0f, 0.0f), 15.0f / (9.4f * 3.0f), 1e-6f);
+    CHECK_NEAR(thrust_model_to_duty(af, 15.0f, NAN), 15.0f / (9.4f * 3.0f), 1e-6f);
+}
+
+/* デューティ上限 duty_max（安定化電源での検証用。2026-11-22） */
+static void test_thrust_duty_max(void)
+{
+    airframe_params_t af = P.airframe;
+    const float vs[] = { 3.0f, 3.5f, 3.8f, 4.2f, 4.35f, 4.5f, 6.0f };
+    const float caps[] = { 0.3f, 0.6f, 1.0f };
+    for (int c = 0; c < 3; c++) {
+        af.duty_max = caps[c];
+        for (int k = 0; k < 7; k++) {
+            /* 最大推力は duty_max に比例する */
+            float v = thrust_model_clamp_voltage(&af, vs[k]);
+            CHECK_NEAR(thrust_model_max_g(&af, vs[k]), 9.4f * v * caps[c], 1e-3f);
+            /* どんな推力を要求してもデューティは duty_max を超えない */
+            const float reqs[] = { -1.0f, 0.0f, 5.0f, 20.0f, 40.0f, 1.0e6f, INFINITY, NAN };
+            for (int r = 0; r < 8; r++) {
+                float d = thrust_model_to_duty(&af, reqs[r], vs[k]);
+                CHECK(d >= 0.0f && d <= caps[c]);
+            }
+            /* 最大推力ちょうどなら duty_max */
+            CHECK_NEAR(thrust_model_to_duty(&af, thrust_model_max_g(&af, vs[k]), vs[k]), caps[c], 1e-5f);
+        }
+    }
+    /* 上限の内側の推力は上限なしと同じデューティ（換算式は変わらない） */
+    af.duty_max = 0.6f;
+    CHECK_NEAR(thrust_model_to_duty(&af, 12.5f, 3.8f), 12.5f / (9.4f * 3.8f), 1e-6f);
+    /* 上限の外側の推力は duty_max に張りつく（0.6 を超える分は切る） */
+    CHECK_NEAR(thrust_model_to_duty(&af, 9.4f * 3.8f * 0.7f, 3.8f), 0.6f, 0.0f);
+}
+
+static void test_params_duty_max_validate(void)
+{
+    params_t p;
+    params_set_defaults(&p);
+    CHECK(params_validate(&p));
+    p.airframe.duty_max = 1.0f;  CHECK(params_validate(&p));
+    p.airframe.duty_max = 0.01f; CHECK(params_validate(&p));
+    p.airframe.duty_max = 0.0f;  CHECK(!params_validate(&p));
+    p.airframe.duty_max = -0.1f; CHECK(!params_validate(&p));
+    p.airframe.duty_max = 1.5f;  CHECK(!params_validate(&p));
+    p.airframe.duty_max = NAN;   CHECK(!params_validate(&p));
+    p.airframe.duty_max = INFINITY; CHECK(!params_validate(&p));
+    params_set_defaults(&p);
+    /* LiHV: v_max は 4.35V（v_low・v_min は電池を付けるときに決める） */
+    CHECK_NEAR(p.battery.v_max, 4.35f, 0.0f);
+    CHECK_NEAR(p.gyro_filter.cutoff_hz, 80.0f, 0.0f);
+    p.gyro_filter.cutoff_hz = 0.0f;    CHECK(params_validate(&p));
+    p.gyro_filter.cutoff_hz = 1000.0f; CHECK(params_validate(&p));
+    p.gyro_filter.cutoff_hz = -1.0f;   CHECK(!params_validate(&p));
+    p.gyro_filter.cutoff_hz = 1001.0f; CHECK(!params_validate(&p));
+    p.gyro_filter.cutoff_hz = NAN;     CHECK(!params_validate(&p));
 }
 
 /* ---------- 全体の流れ（姿勢→PID→ミキサー→デューティ）の1周 ---------- */
@@ -677,15 +732,17 @@ int main(void)
         { "imu_mount: 軸の並べ替えと不正な設定の拒否", test_imu_mount },
         { "physical: 傾けると戻す向きのモーターが上がる（確定した配置）", test_physical_signs },
         { "thrust: 推力→デューティの式", test_thrust_model },
+        { "thrust: デューティ上限 duty_max", test_thrust_duty_max },
+        { "params: duty_max・ジャイロLPFの範囲検査", test_params_duty_max_validate },
         { "chain: 姿勢→PID→ミキサー→デューティ", test_chain },
         { "battery: 偽ADCの生カウント→電圧（分圧比）", test_battery_update_with_divider },
         { "cycle_timing: 遅れ・処理時間・取りこぼし", test_cycle_timing },
     };
-    const test_t *suites[] = { tests, g_tests_fsm, g_tests_guard, g_tests_descent, g_tests_ipc, g_tests_loop };
+    const test_t *suites[] = { tests, g_tests_fsm, g_tests_guard, g_tests_descent, g_tests_ipc, g_tests_loop, g_tests_gyro };
     const int counts[] = { (int)(sizeof(tests) / sizeof(tests[0])), g_tests_fsm_n, g_tests_guard_n,
-                           g_tests_descent_n, g_tests_ipc_n, g_tests_loop_n };
+                           g_tests_descent_n, g_tests_ipc_n, g_tests_loop_n, g_tests_gyro_n };
     int n = 0, failed_tests = 0;
-    for (int s = 0; s < 6; s++) {
+    for (int s = 0; s < 7; s++) {
         for (int i = 0; i < counts[s]; i++) {
             int before = g_fail;
             g_test_checks = 0;
