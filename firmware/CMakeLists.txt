@@ -110,6 +110,33 @@ pico_enable_stdio_usb(loop_bench 1)
 pico_enable_stdio_uart(loop_bench 0)
 pico_add_extra_outputs(loop_bench)
 
+# ---- 試験アプリ motor_test（モーター単体試験）----
+# プロペラを外し、安定化電源(4.0V・電流制限つき)から給電して、モーターを1個ずつ低いデューティで回す
+# （docs/motor_test.md）。同時に回るのは1個だけ。デューティ上限は FC_MOTOR_TEST_DUTY_MAX（既定0.30）。
+# 例: cmake -DFC_MOTOR_TEST_DUTY_MAX=0.20 ...   （0より大きく1.0以下。0.30超は警告）
+set(FC_MOTOR_TEST_DUTY_MAX "0.30" CACHE STRING "motor_test のデューティ上限（0 < x <= 1.0）")
+if(NOT FC_MOTOR_TEST_DUTY_MAX MATCHES "^([0-9]+\\.?[0-9]*|\\.[0-9]+)$")
+    message(FATAL_ERROR "FC_MOTOR_TEST_DUTY_MAX='${FC_MOTOR_TEST_DUTY_MAX}' は数値ではない（例: 0.30）")
+endif()
+if(FC_MOTOR_TEST_DUTY_MAX LESS_EQUAL 0 OR FC_MOTOR_TEST_DUTY_MAX GREATER 1.0)
+    message(FATAL_ERROR "FC_MOTOR_TEST_DUTY_MAX=${FC_MOTOR_TEST_DUTY_MAX} は 0 より大きく 1.0 以下にする")
+endif()
+if(FC_MOTOR_TEST_DUTY_MAX GREATER 0.30)
+    message(WARNING "FC_MOTOR_TEST_DUTY_MAX=${FC_MOTOR_TEST_DUTY_MAX}: 0.30 より大きい。必ずプロペラを外し、電流制限を確認すること")
+endif()
+
+add_executable(motor_test apps/motor_test.c)
+target_compile_options(motor_test PRIVATE -Wall -Wextra)
+target_compile_definitions(motor_test PRIVATE MOTOR_TEST_DUTY_MAX=${FC_MOTOR_TEST_DUTY_MAX})
+target_link_libraries(motor_test PRIVATE fc_core fc_port_pico hardware_watchdog)
+
+pico_set_program_name(motor_test "motor_test")
+pico_set_program_version(motor_test "0.1")
+# GP0 は SDK 既定のUART送信ピン（= M1）。UARTは必ず無効、出力はUSBのみ
+pico_enable_stdio_usb(motor_test 1)
+pico_enable_stdio_uart(motor_test 0)
+pico_add_extra_outputs(motor_test)
+
 # ---- 本体 drone_fw（ステップ③以降）の雛形 ----
 # add_executable(drone_fw src/main.c ...)
 # target_link_libraries(drone_fw PRIVATE fc_core fc_port_pico)
