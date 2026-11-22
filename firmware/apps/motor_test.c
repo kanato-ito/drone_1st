@@ -16,6 +16,7 @@
  *   - 次のときは即座に全部止める（なだらかにはしない）: 停止コマンド、最後のキー入力から
  *     MOTOR_TEST_RUN_TIMEOUT_MS（既定10秒）、USBの切断。
  *   - ウォッチドッグ200ms。固まったら再起動し、motor_pwm_init で0に戻る。
+ *     USB出力の詰まりで止まらないよう、printf の待ち時間の上限を20msにしてある（CMakeLists.txt）。
  *   - GP0 は SDK 既定のUART送信ピン。UART出力は無効にしてある（USBのみ）。
  *
  * コマンド（USBシリアルから1文字。Enter不要の端末を推奨）:
@@ -92,6 +93,20 @@ static params_t        prm;      /* 既定値（電池の換算に使う） */
 static bool            no_batt;
 
 static float target(void) { return DUTY_STEP * (float)T.steps; }
+
+/**
+ * ウォッチドッグに餌をやりながら待つ。WDTは200msなので、sleep_ms で200ms以上まとめて寝ると再起動してしまう。
+ */
+static void sleep_ms_fed(uint32_t ms)
+{
+    while (ms > 0u) {
+        uint32_t d = ms > 50u ? 50u : ms;
+        watchdog_update();
+        sleep_ms(d);
+        ms -= d;
+    }
+    watchdog_update();
+}
 
 static void print_help(void)
 {
@@ -232,8 +247,7 @@ int main(void)
         watchdog_update();
         sleep_ms(50);
     }
-    sleep_ms(500);
-    watchdog_update();
+    sleep_ms_fed(500);
 
     print_banner();
     if (wdt_reboot) printf("!! ウォッチドッグで再起動した（モーターは全部0）\n");
@@ -259,8 +273,7 @@ int main(void)
         }
         if (!usb_was) {
             usb_was = true;
-            sleep_ms(500);
-            watchdog_update();
+            sleep_ms_fed(500);
             printf("\n>> USB再接続。モーターは止まっている\n");
             print_help();
             next_tick_us = time_us_32() + TICK_US;

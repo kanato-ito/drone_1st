@@ -127,7 +127,11 @@ endif()
 
 add_executable(motor_test apps/motor_test.c)
 target_compile_options(motor_test PRIVATE -Wall -Wextra)
-target_compile_definitions(motor_test PRIVATE MOTOR_TEST_DUTY_MAX=${FC_MOTOR_TEST_DUTY_MAX})
+# PICO_STDIO_USB_STDOUT_TIMEOUT_US: 端末が読んでいないとき printf が待つ上限（SDK既定は500ms）。
+# ウォッチドッグ200msより短くしないと、表示の詰まりで再起動してしまう。
+target_compile_definitions(motor_test PRIVATE
+    MOTOR_TEST_DUTY_MAX=${FC_MOTOR_TEST_DUTY_MAX}
+    PICO_STDIO_USB_STDOUT_TIMEOUT_US=20000)
 target_link_libraries(motor_test PRIVATE fc_core fc_port_pico hardware_watchdog)
 
 pico_set_program_name(motor_test "motor_test")
