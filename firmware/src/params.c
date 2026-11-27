@@ -35,7 +35,7 @@ void params_set_defaults(params_t *p)
     }
     set_gains(&p->pid.angle[2], 2.0f, 0.0f, 0.0f, 0.0f, 1.5f, 0.0f);
     set_gains(&p->pid.rate[2],  0.5f, 0.5f, 0.0f, 0.5f, 3.0f, 50.0f);
-    p->pid.i_enable_thrust_g = 9.0f;   /* 2026-11-13 決定（シミュ）: 浮く推力 約12.3g の7割強。3gでは床で積分が張りつき離陸直後に約15°傾いた。これ以下では積分しない */
+    p->pid.i_enable_thrust_g = 9.0f;   /* 2026-11-13 決定（シミュ）: 浮く推力 約12.5g の7割強。3gでは床で積分が張りつき離陸直後に約15°傾いた。これ以下では積分しない */
 
     /* ---- 姿勢推定（仮）---- */
     p->attitude.tau_s              = 2.0f;    /* 2026-11-13 初期値（シミュ: 横流れ中のずれ 0.5sで11°→2sで3.9°）。残りは実機で確認 */
@@ -61,12 +61,14 @@ void params_set_defaults(params_t *p)
     p->airframe.thrust_k_g_per_vduty   = 9.4f;   /* HW実測 */
     p->airframe.voltage_min_calc_v     = 3.0f;   /* 提案 */
     p->airframe.throttle_full_thrust_g = 28.0f;  /* 仮: 3.5Vで満タン約33g より下に余裕を残す */
+    /* 2026-11-22 オーナー決定: 安定化電源での検証中はデューティ上限0.6（電源の電流制限6A以下とあわせて）。電池で飛ぶ段階で見直す */
+    p->airframe.duty_max               = 0.6f;
 
     /* ---- 電池 ---- */
-    p->battery.adc_divider_ratio = 2.0f;   /* 仮置き。TODO: HW設計書で確認 */
+    p->battery.adc_divider_ratio = 2.0f;   /* R9・R10とも100kΩ。HW設計書4.3と発注版基板で確認済み */
     p->battery.lpf_tau_s         = 1.0f;   /* 仮 */
     p->battery.adc_vref_v        = 3.3f;
-    p->battery.v_max             = 4.2f;
+    p->battery.v_max             = 4.35f;  /* LiHV（満充電4.35V）。2026-11-22 オーナー決定。v_low・v_min は電池を付けるときに決める */
     p->battery.v_min             = 3.5f;   /* 推力の直線性を実測した下限 */
     p->battery.v_low             = 3.6f;   /* 仮 */
     p->battery.low_hold_ms       = 500;    /* 仮 */
@@ -100,6 +102,9 @@ void params_set_defaults(params_t *p)
     /* 確定（設計メモ、2026-11-08 オーナー）。IMU基板: x右・y前・z上 → 機体: x前・y左・z上。
      * 機体x = +基板y、機体y = -基板x、機体z = +基板z */
     p->imu_mount.axis_map[0] = 2; p->imu_mount.axis_map[1] = -1; p->imu_mount.axis_map[2] = 3;
+
+    /* ジャイロのローパス: 2次 80Hz（HW設計書・開発計画書。2026-11-22 オーナー決定） */
+    p->gyro_filter.cutoff_hz = 80.0f;
 }
 
 static bool gains_ok(const pid_gains_t *g)
@@ -125,7 +130,9 @@ bool params_validate(const params_t *p)
     if (!(isfinite(af->thrust_k_g_per_vduty) && af->thrust_k_g_per_vduty > 0.0f)) return false;
     if (!(isfinite(af->voltage_min_calc_v) && af->voltage_min_calc_v > 0.0f)) return false;
     if (!ok_nonneg(af->throttle_full_thrust_g)) return false;
+    if (!(isfinite(af->duty_max) && af->duty_max > 0.0f && af->duty_max <= 1.0f)) return false;
     if (!imu_mount_valid(&p->imu_mount)) return false;
+    if (!(isfinite(p->gyro_filter.cutoff_hz) && p->gyro_filter.cutoff_hz >= 0.0f && p->gyro_filter.cutoff_hz <= 1000.0f)) return false;
     const battery_params_t *b = &p->battery;
     if (!(b->adc_divider_ratio > 0.0f) || !(b->lpf_tau_s > 0.0f) || !(b->v_min < b->v_max) ||
         !(b->v_low >= b->v_min) || !(b->v_low <= b->v_max)) return false;

@@ -30,5 +30,6 @@ extern const test_t g_tests_guard[];     extern const int g_tests_guard_n;
 extern const test_t g_tests_descent[];   extern const int g_tests_descent_n;
 extern const test_t g_tests_ipc[];       extern const int g_tests_ipc_n;
 extern const test_t g_tests_loop[];      extern const int g_tests_loop_n;
+extern const test_t g_tests_gyro[];      extern const int g_tests_gyro_n;
 
 #endif /* TEST_COMMON_H */

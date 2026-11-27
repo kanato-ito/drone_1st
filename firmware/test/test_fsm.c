@@ -260,6 +260,25 @@ static void test_fsm_misc(void)
     CHECK(f.state == FS_EMERGENCY_STOP); CHECK(f.estop_reason == ESTOP_INTERNAL_ERROR);
 }
 
+/** IMU設定の不一致（提案）: 飛行中・降下中だけ非常停止。他の状態のFSMは見ない（待機はアーム条件で、制御ループが止める） */
+static void test_fsm_imu_config_fault(void)
+{
+    flight_fsm_inputs_t in = base(); in.imu_config_fault = true;
+    EXPECT(FS_FLIGHT, in, FS_EMERGENCY_STOP, true, ESTOP_IMU_CONFIG);
+    EXPECT(FS_EMERGENCY_DESCENT, in, FS_EMERGENCY_STOP, true, ESTOP_IMU_CONFIG);
+    EXPECT(FS_WAIT_COMM, in, FS_WAIT_COMM, false, ESTOP_NONE);
+    EXPECT(FS_STANDBY, in, FS_STANDBY, false, ESTOP_NONE);
+    in.comm_connected = true;
+    EXPECT(FS_WAIT_COMM, in, FS_STANDBY, true, ESTOP_NONE);             /* 通信待機の遷移は妨げない */
+    /* IMU途絶のほうが先（imu_timeout の直後に評価する） */
+    in = base(); in.imu_config_fault = true; in.imu_timeout = true;
+    EXPECT(FS_FLIGHT, in, FS_EMERGENCY_STOP, true, ESTOP_IMU_TIMEOUT);
+    EXPECT(FS_EMERGENCY_DESCENT, in, FS_EMERGENCY_STOP, true, ESTOP_IMU_TIMEOUT);
+    /* 数値は既存の理由を動かさない（ログが使う）。名前も付く */
+    CHECK((int)ESTOP_INTERNAL_ERROR == 8 && (int)ESTOP_IMU_CONFIG == 9);
+    CHECK(strcmp(estop_reason_name(ESTOP_IMU_CONFIG), "imu_config") == 0);
+}
+
 /** 乱数の入力で長く回し、状態の不変条件を確かめる。 */
 static void test_fsm_random_invariants(void)
 {
@@ -275,6 +294,7 @@ static void test_fsm_random_invariants(void)
         rng = rng * 1664525u + 1013904223u; uint32_t b = rng;
         /* 非常停止系の入力は低確率にして、状態が先へ進むようにする */
         in.boot_imu_ok = (a & 15) != 0; in.wdt_reboot = (a & 0xff0) == 0; in.imu_timeout = (a & 0xff000) == 0;
+        in.imu_config_fault = ((b >> 12) & 0x1ff) == 0;
         in.comm_connected = (a >> 20) & 1; in.comm_lost = ((a >> 21) & 7) == 0;
         in.arm_rising_edge = (b & 3) == 0; in.level_and_zero_throttle = (b >> 2) & 1;
         in.disarm_request = ((b >> 3) & 15) == 0; in.estop_request = ((b >> 7) & 0x3ff) == 0;
@@ -305,6 +325,7 @@ const test_t g_tests_fsm[] = {
     { "fsm: 非常停止は何があっても抜けない", test_fsm_estop_latches },
     { "fsm: 操作者の非常停止はどの状態からでも", test_fsm_operator_estop_everywhere },
     { "fsm: 初期値・時刻・名前・モーター許可", test_fsm_misc },
+    { "fsm: IMU設定の不一致（飛行・降下で非常停止）", test_fsm_imu_config_fault },
     { "fsm: 乱数の入力で不変条件", test_fsm_random_invariants },
 };
 const int g_tests_fsm_n = (int)(sizeof(g_tests_fsm) / sizeof(g_tests_fsm[0]));

@@ -58,22 +58,26 @@ typedef struct {
  */
 typedef struct {
     /**
-     * ★★★ TODO: プロペラを付けて回す前に必ず確定 ★★★
-     * 行 = M1..M4、列 = roll,pitch,yaw の符号(+1/-1)。モーターの位置・回転方向が未決なので
-     * 今は仮の値（M1=前左 M2=前右 M3=後右 M4=後左、M1とM3がCW）。実機で1つずつ確かめること。
+     * 行 = M1..M4、列 = roll,pitch,yaw の符号(+1/-1)。符号は確定（2026-11-08 オーナー、設計メモ）。
+     * モーターの位置・回転方向は params.c の mixer_sign の定義のところに書いてある。
      */
     int8_t  mixer_sign[FC_NUM_MOTORS][3];
-    float   thrust_k_g_per_vduty;   /**< 推力[g] ≒ K × デューティ × 電圧[V]。HW実測 9.4（3.5〜4.2Vで直線） */
+    float   thrust_k_g_per_vduty;   /**< 推力[g] ≒ K × デューティ × 電圧[V]。HW実測 9.4（3.5〜4.2Vで直線。4.2〜4.35Vは外挿。提案: 電池を付けたら確認） */
     float   voltage_min_calc_v;     /**< 換算に使う電圧の下限 [V]。ADC未接続・異常値で割り算が暴れないように（提案） */
     float   throttle_full_thrust_g; /**< スロットル1.0のときの1モーター推力 [g]（スロットル→推力の換算。提案） */
+    /**
+     * 1モーターのデューティ上限（0..1]。安定化電源での検証中は0.6（2026-11-22 オーナー決定。電源の電流制限6A以下とあわせて）。
+     * 電池で飛ぶ段階で見直す。ミキサーの最大推力もこれで決まる（thrust_model_max_g = K × V × duty_max）。
+     */
+    float   duty_max;
 } airframe_params_t;
 
 /** 電池。電圧範囲を含む。 */
 typedef struct {
-    float adc_divider_ratio; /**< 分圧比（電池電圧 = ADC電圧 × この値）。仮置き。TODO: HW設計書で確認 */
+    float adc_divider_ratio; /**< 分圧比（電池電圧 = ADC電圧 × この値）。2.0（R9・R10とも100kΩ。HW設計書4.3と発注版基板で確認済み） */
     float lpf_tau_s;         /**< 電圧のローパス時定数 [s]（ゆっくり。モーター負荷で電圧が揺れるため） */
     float adc_vref_v;        /**< ADC基準 [V] */
-    float v_max;             /**< 満充電付近 [V]（電圧範囲の上端） */
+    float v_max;             /**< 満充電付近 [V]（電圧範囲の上端）。LiHVなので4.35V */
     float v_min;             /**< 使用下限 [V]（電圧範囲の下端） */
     float v_low;             /**< 電池低下とみなす電圧 [V]（非常時降下のきっかけ。値は未決） */
     uint32_t low_hold_ms;    /**< v_low 未満がこの時間続いたら低下確定 */
@@ -96,7 +100,7 @@ typedef struct {
     float    rate_takeover_rps;    /**< 角速度が大きすぎる */
     float    policy_sat_ratio;     /**< 出力が上限の何割以上を「張りつき」とみなすか */
     uint16_t policy_sat_cycles;    /**< 張りつきが何周期続いたら異常か */
-    uint32_t policy_budget_us;     /**< 方策の計算時間の上限（周期1.04msより小さく） */
+    uint32_t policy_budget_us;     /**< 方策の計算時間の上限（周期は約1.064msなので、それより小さく） */
 } guard_params_t;
 
 /** 非常時降下と着地検出（数値は飛行試験で決める）。 */
@@ -117,6 +121,15 @@ typedef struct {
     float out_scale[FC_CONTROLLER_OUTPUT_DIM];
 } policy_norm_params_t;
 
+/**
+ * ジャイロのローパス（角速度ループの入力用）。
+ * 遮断周波数 [Hz]。0で無し。HW設計書・開発計画書の「2次 80Hz」。角速度ループの入力だけに使い、姿勢推定には生の値を使う。
+ * 2026-11-22 オーナー決定。
+ */
+typedef struct {
+    float cutoff_hz;
+} gyro_filter_params_t;
+
 /** IMUの取り付け（基板座標→機体座標）。提案。 */
 typedef struct {
     int8_t axis_map[3];   /**< 機体のx,y,zに使う基板の軸 (±1..±3, 符号が向き) */
@@ -134,6 +147,7 @@ typedef struct {
     descent_params_t     descent;
     policy_norm_params_t policy_norm;
     imu_mount_params_t   imu_mount;
+    gyro_filter_params_t gyro_filter;
 } params_t;
 
 /** TCPの SET_PARAM で指定するID（提案。代表のみ、実装時に追加）。 */

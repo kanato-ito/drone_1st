@@ -149,7 +149,7 @@ FLOOR_ROLL_RAD = 5.0 * DEG      # 床の傾き（アームできる上限 10° �
 WINDUP_TAKEOFF = 6.0
 
 
-I_ENABLE_OLD_G = 3.0       # 元の仮の値（浮く推力 約12.3g よりずっと下）
+I_ENABLE_OLD_G = 3.0       # 元の仮の値（浮く推力 約12.5g よりずっと下）
 I_ENABLE_DECIDED_G = 9.0   # 2026-11-13 決定（浮く推力の7割強）
 TAU_OLD_S = 0.5
 TAU_DECIDED_S = 2.0        # 2026-11-13 決定（初期値。残りは実機で確かめる）

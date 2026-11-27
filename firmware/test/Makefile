@@ -25,9 +25,9 @@ CXXFLAGS := -std=c++17 -O1 -g -Wall -Wextra -Wdouble-promotion -Wfloat-conversio
 CXX_SKIP_HDRS := ipc_flags.h spsc_ring.h ipc.h control_loop.h
 SRCS    := test_main.c $(SRC_DIR)/attitude.c $(SRC_DIR)/controller.c $(SRC_DIR)/controller_pid.c \
            $(SRC_DIR)/mixer.c $(SRC_DIR)/imu_mount.c $(SRC_DIR)/thrust_model.c $(SRC_DIR)/params.c \
-           $(SRC_DIR)/battery.c $(SRC_DIR)/cycle_timer.c \
+           $(SRC_DIR)/battery.c $(SRC_DIR)/cycle_timer.c $(SRC_DIR)/gyro_filter.c \
            $(SRC_DIR)/flight_state.c $(SRC_DIR)/guard.c $(SRC_DIR)/emergency_descent.c $(SRC_DIR)/control_loop.c $(SRC_DIR)/mailbox.c $(SRC_DIR)/ipc_flags.c \
-           test_fsm.c test_guard_descent.c test_ipc.c test_loop.c fake_port.c
+           test_fsm.c test_guard_descent.c test_ipc.c test_loop.c test_gyro_filter.c fake_port.c
 PURE_SRCS := $(wildcard $(SRC_DIR)/*.c)
 HDRS    := $(wildcard $(INC_DIR)/*.h)
 

@@ -16,6 +16,7 @@
 #include "params.h"
 #include "ipc.h"
 #include "imu_lsm6dsv16x.h"
+#include "gyro_filter.h"
 #include "attitude.h"
 #include "controller.h"
 #include "controller_pid.h"
@@ -64,6 +65,8 @@ typedef struct {
     uint32_t wdt_feeds;    /**< fc_wdt_feed を呼んだ回数 */
     uint32_t int1_stuck;   /**< INT1張り付きをラッチした回数（0か1） */
     uint32_t no_sample;    /**< 読めたがサンプル0個（または読み出し失敗）で制御を進めなかった周期（ev あり） */
+    uint32_t cfg_mismatch; /**< 提案: IMUの設定レジスタの読み戻しが不一致だった回数（2回読んでも違った） */
+    uint32_t cfg_rewrites; /**< 提案: imu_config_rewrite を呼んだ回数（モーター停止中のみ） */
 } control_loop_stats_t;
 
 /** コア0の全状態。静的に1つだけ確保する（mallocなし）。 */
@@ -103,6 +106,8 @@ typedef struct {
     uint32_t no_sample_count;            /**< サンプル0個（読み出し失敗を含む）の連続周期数 */
     bool  int1_stuck;                    /**< INT1張り付きをラッチ（再起動まで。IMU途絶として非常停止、読み直しもしない） */
     bool  imu_stalled;                   /**< 今周期はIMUのデータなし（INT1が来ずピンもLow） */
+    bool  imu_cfg_fault;                 /**< 提案: IMU設定の不一致を検出（rewrite が成功するまで残る）。飛行中・降下中なら非常停止、待機中ならアームを止める */
+    gyro_filter_t gyro_lpf;              /**< 提案: 角速度ループ用のジャイロのローパス（姿勢推定には使わない） */
     descent_target_t desc_tgt;           /**< 降下の目標（降下中のみ有効） */
     euler_t target_att;                  /**< 今周期の目標姿勢 */
     float   target_thrust_g;             /**< 今周期の目標推力 */
@@ -139,8 +144,8 @@ void control_loop_init(control_loop_t *c, const params_t *params);
  * ev==NULL は「INT1が来ない（IMU途絶）」周期: 読み出しはせず、IMU途絶として状態機械に渡す。
  * 非常停止中も同じ（モーター停止のまま、ログ作成とWDTの餌やりを続ける。architecture.md #19）。
  *
- * 中では imu_read_fifo（直後に imu_mount_apply で基板の軸→機体の軸へ）、motor_pwm_*、battery_update、
- * fc_clock_*、fc_wdt_feed、mailbox / ipc_flags を、それぞれのヘッダ越しにだけ呼ぶ（SDKには触らない）。
+ * 中では imu_read_fifo（直後に imu_config_check_next、imu_mount_apply で基板の軸→機体の軸へ）、motor_pwm_*、battery_update、
+ * imu_config_rewrite（設定の不一致があり、モーター停止中のみ）、fc_clock_*、fc_wdt_feed、mailbox / ipc_flags を、それぞれのヘッダ越しにだけ呼ぶ（SDKには触らない）。
  *
  * @return INT1ピンが読み終えてもまだHigh（立ち上がりを取りこぼした）なら true。
  *         呼び出し側は待たずにすぐもう一度 run_once を呼ぶ（architecture.md #10/#12）。
